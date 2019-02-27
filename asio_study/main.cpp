@@ -432,7 +432,7 @@ int Create_Client_Connect_TCP() {
 	
 	//Step 1
 	std::string ip_address = "127.0.0.1";
-	unsigned short port_num = 5555;
+	unsigned short port_num = 3333;
 	try
 	{
 		asio::io_service ios;
@@ -634,7 +634,26 @@ int Create_Server_TCP_SYN() {
 	}
 	return 0;
 }
+//========Chapter 2==========//
+//I/O Operations
+
+//I/O操作是任何分布式应用程序的网络基础结构中的关键操作
+//它们直接参与数据交换过程
+//输入操作用于从远程应用程序接收数据,而输出操作允许向它们发送数据
+//
+//I/Obuffer
+//通信意味着在两个或多个进程之间交换数据
+//网络I/O涉及使用内存缓冲区,这些内存缓冲区是在用于存储数据的进程的地址空间中分配的连续内存块
+//在进行任何类型的输入操作(如:通过网络从文件,管道或远程计算机读取某些文件)时,数据到达进程并
+//且必须存储在其地址空间中的某个位置以便它可用进一步处理
+//也就是说,当缓冲区派上用场时,在执行输入操作之前,分配缓冲区,然后在操作期间用作数据目标点
+//当输入操作完成时,缓冲区包含可由应用程序处理的输入数据,同样在执行输出操作之前,必须准备数据并将其放入输出缓冲区
+//然后输出缓冲区用于输出操作,在输出操作中它扮演数据源的角色,显然,缓冲区是执行任何类型I/O的任何应用程序的基本组成部分
+//包括网络I/O
+//p55
 int main() {
+
+	//====CH.1====
 	//if (Resolving_DNS_TCP() != 0) {
 	//	return 1;
 	//}
@@ -644,6 +663,9 @@ int main() {
 	//Create_Server_Acceptor_TCP();
 	//Create_Server_Acceptor_UDP();
 	//Create_Client_Connect_TCP();
-	Create_Client_Connect_DNS_TCP();
+	//Create_Client_Connect_DNS_TCP();
+	//Create_Server_TCP_SYN();
+
+	//====CH.2====
 	std::system("pause");
 }
