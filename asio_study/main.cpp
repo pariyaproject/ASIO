@@ -429,7 +429,7 @@ int Create_Server_Acceptor_UDP() {
 
 int Create_Client_Connect_TCP() {
 
-	
+
 	//Step 1
 	std::string ip_address = "127.0.0.1";
 	unsigned short port_num = 3333;
@@ -509,7 +509,7 @@ int Create_Client_Connect_DNS_TCP() {
 	{
 		//Step 2
 		asio::ip::tcp::resolver::query resolver_query(host, port_num, asio::ip::tcp::resolver::query::numeric_service);
-		
+
 		asio::io_service ios;
 
 		asio::ip::tcp::resolver resolver(ios);
@@ -651,6 +651,154 @@ int Create_Server_TCP_SYN() {
 //然后输出缓冲区用于输出操作,在输出操作中它扮演数据源的角色,显然,缓冲区是执行任何类型I/O的任何应用程序的基本组成部分
 //包括网络I/O
 //p55
+
+//Boost.Asio支持两种类型的I/O操作:同步和异步
+//同步操作会阻止调用它们的执行线程,并且仅在操作完成时才解除阻塞
+//因此,这种类型的操作的名称:同步
+//第二种是异步操作,启动异步操作时,它与回调函数或仿函数相关联,该函数在操作完成时由Boost.Asio库调用
+//这些类型的I/O操作提供了很大的灵活性,但可能会使代码复杂化
+//操作的启动很简单,并且不会阻塞执行的线程,这允许我们使用线程来运行其他任务,而异步操作则在后台运行
+//Boost.Asio库是作为一个框架实现的,它利用了控制方法的反转.一个或多个异步操作启动后,应用处理在这个线程执行的线程库
+//而后者使用的一个运行事件循环和调用应用程序提供的回调,通知有关的以前发起的异步操作的完成
+//异步操作的结果作为参数传递给回调函数
+//除此之外,我们还将考虑取消异步操作,关闭和关闭套接字等操作
+//取消先前启动的异步操作的能力非常重要,它允许应用程序声明先前启动的操作不再相关
+//这可能会节省应用程序的资源(CPU和内存),否则会造成浪费,当应用层协议没有为我们提供指明消息边界的
+//其他方法时,如果需要分布式应用程序的一部分通知另一部分已发送整个消息,则关闭套接字是有用的
+
+//固定长度I/O缓冲区通常与I/O操作一起使用,并且在已知要发送或接收的消息的大小时起到数据源或目标的作用
+//例如,这可以是在空闲存储器中分配的可写缓冲区,当从套接字读取数据时,该可写缓冲区用作数据目标点
+
+//在Boost.Asio中,固定长度缓冲区由两个类之一表示:
+//asio::mutable_buffer或asio::const_buffer
+//这两个类都表示一个连续的内存块,它由块的第一个字节的地址及其大小
+//(以字节为单位)指定.正如这些类的名称所示,asio::mutable_buffer表示可写缓冲区,而asio::const_buffer表示只读缓冲区
+//但是,asio::mutable_buffer和asio::const_buffer类都不直接在Boost.Asio I/O函数和方法中使用
+//相反,引入了MutableBufferSequence和ConstBufferSequence概念
+
+//MutableBufferSequence概念指定一个对象,该对象表示asio::mutable_buffer对象的集合
+//相应地,ConstBufferSequence概念指定一个对象,该对象表示asio::const_buffer对象的集合
+//执行I/O操作的Boost.Asio函数和方法接受满足MutableBufferSequence或ConstBufferSequence概念要求的对象
+//作为表示缓冲区的参数
+
+//虽然在大多数用例中,单个I/O操作中涉及单个缓冲区,但在某些特定情况下(例如,在内存受限的环境中)
+//开发人员可能希望使用包含多个较小简单缓冲区的复合缓冲区分布在进程的地址空间
+//Boost.Asio I/O函数和方法旨在使用复合缓冲区,复合缓冲区表示为满足MutableBufferSequence或ConstBufferSequence概念要求的缓冲区集合
+//例如,std::vector<asio::mutable_buffer>类的对象满足MutableBufferSequence概念的要求,因此,它可用于表示与I/O相关
+//的函数和方法中的复合缓冲区,所以,现在我们知道如果我们有一个表示为asio::mutable_buffer或asio::const_buffer类的对象的缓冲区
+//我们仍然不能将它与Boost提供的I/O相关函数或方法一起使用,缓冲区必须表示为一个对象,分别满足MutableBufferSequence或ConstBufferSequence概念的要求
+//为此,我们例如可以通过实例化std::vector<asio::mutable_buffer>类的对象并将缓冲区组成的缓冲区对象的集合
+//现在缓冲区是集合的一部分,满足MutableBufferSequence要求可以在I/O操作中使用
+//但是,虽然这种方法可以很好地创建由两个或多个简单缓冲区组成的复合缓冲区,但是当涉及到表示单个简单缓冲区这样的简单任务时它
+//为了可以与Boost.Asio I/O函数或方法一起使用,但看起来过于复杂,同时,Boost.Asio为我们提供了一种通过I/O相关函数和方法简化单个缓冲区使用的方法 
+//asio::buffer()自由函数有28个重载,它们接受缓冲区的各种表示,并返回asio::mutable_buffer_1或asio::const_buffer_1类的对象,
+//如果传递给asio::buffer()函数的缓冲区参数是只读类型,则该函数返回asio::const_buffer_1类的对象;
+//否则返回asio::mutable_buffers_1类的对象.asio::mutable_buffers_1和asio::const_buffers_1类分别是asio::mutable_buffer和asio::const_buffer类的
+//适配器,它们提供了满足MutableBUfferSequence和ConstBufferSequence概念要求的接口和行为
+//这允许我们将这些适配器作为参数传递给Boost.Asio I/O函数和方法
+
+//下面算法描述了如何准备一个缓冲区,该缓冲区可以与Boost.Asio socket的方法一起使用,
+//该方法执行输出操作,如asio::ip::tcp::socket::send()或asio::write()自由函数
+//1.分配一个缓冲区,注意,此步骤不涉及Boost.Asio中的任何功能或数据类型
+//2.使用要用作输出的数据填充缓冲区
+//3.将缓冲区表示为满足ConstBufferSeqyebce概念要求的对象
+//4.缓冲区已准备好与Boost.Asio输出方法和函数一起使用
+int Create_Const_Buffer() {
+
+	std::string buf;
+	//Step 1 + Step 2
+	buf = "hello";
+
+	//Step 3
+	//这里使用const_buffer,
+	//[注意]const_buffer_1已过时
+	//之后会提到
+	asio::const_buffer output_buf = asio::buffer(buf);
+
+	//Boost.Asio输出函数:下面是表示TCP套接字的Boost.Asio类的send()方法的声明
+	/*template<typename ConstBufferSequence>
+	std::size_t send(const ConstBufferSequence & buffers);	*/
+	//这是一个模板方法,它接受一个满足ConstBufferSequece概念要求的对象作为表示缓冲区的参数
+	//合适的对象是一个复合对象,它表示asio::const_buffer类的对象集合
+	//并提供支持对其元素的进行迭代的典型集合接口
+	//例如:std::vector<asio::const_buffer>类的对象适合用作send()方法的参数,但std::string或asio::const_buffer类的对象不适合
+	//为了使用我们的std::string对象和表示TCP套接字的类的send()方法,我们可以这样做:
+	asio::const_buffer asio_buf(buf.c_str(), buf.length());
+	std::vector<asio::const_buffer> buffers_sequence;
+	buffers_sequence.push_back(asio_buf);
+	//代码中buffer_sequence的对象满足ConstBufferSequence概念的要求,因此,它可以用作套接字对象的send()方法的参数
+	//但是,这种方法非常复杂,相反,我们使用Asio提供的asio::buffer()函数来获取适配器对象
+	//我们可以在I/O操作中直接使用它们
+	//asio::const_buffers_1 output_buf = asio::buffer(buf);
+	//然而以上的方法已过时
+	asio::io_service ios;
+	asio::ip::tcp::socket sock(ios);
+	boost::system::error_code ec;
+	sock.open(asio::ip::tcp::v4(), ec);
+	asio::ip::tcp::endpoint ep(asio::ip::address::from_string("127.0.0.1"), 3333);
+
+	sock.connect(ep);
+	//由此可见目前版本的asio已经抛弃了send只能接受满足XXXXBufferSequence要求的参数的
+	//send()函数的接受一个const_buffer对象,同时也依旧接受一个const_buffer_sequence
+	sock.send(output_buf);
+	sock.send(buffers_sequence);
+	//Step 4
+	return 0;
+}
+
+//以下算法描述了如何准备可以与Boost.Asio套接字执行输入操作的方法一起使用的缓冲区
+//例如asio::ip::tcp::socket::receive()或asio::read()自由函数
+//1.分配一个缓冲区,缓冲区的大小必须足够大,以适应要接收的数据块,注意,此步骤不涉及Boost.Asio中的任何功能或数据类型
+//2.使用满足MutableBufferSequence概念要求的对象表示缓冲区
+//3.缓冲区已准备好与Boost.Asio输入方法和函数一起使用
+
+int Create_Mutable_Buffer() {
+	//与上一个事例相似,区别在于缓冲区已分配但没有填充数据,因为其目的不同
+	//这次,缓冲区旨在在输入操作期间从远程应用程序数据
+	//使用输出缓冲区时,必须正确表示输入缓冲区,以便它可以与Boost.Asio I/O方法和函数一起使用
+	//但是,在这种情况下,缓冲区必须表示为满足MutableBufferSequence概念要求的对象
+	//与ConstBufferSequence相反,此概念表示可变缓冲区的集合,即可以写入的缓冲区
+	//在这里,我们使用buffer()函数,它帮助我们创建缓冲区所需的表示
+	const size_t BUF_SIZE_BYTES = 20;
+
+	//Step 1
+	//分配缓冲区,缓冲区是在空闲内存中分配的字符数组
+	std::unique_ptr<char[]> buf(new char[BUF_SIZE_BYTES]);
+
+	//Step 2
+	//[注意]mutable_buffers_1已过时,使用mutable_buffer
+	asio::mutable_buffer input_buf = asio::buffer(static_cast<void*>(buf.get()), BUF_SIZE_BYTES);
+
+	//Step 3
+	return 0;
+	//
+	//[注意]
+	//const_buffer和mutable_buffer只提供缓冲区的接口,不控制其生命周期
+
+}
+//总之:小结
+//当前版本的ASIO已经抛弃了send()write()等函数必须使用一个满足一个序列的参数的要求
+//因此const_buffers_1和mutable_buffers_1两个适配器类已经被抛弃使用了
+//那些函数已经额外可以接受类似const_buffer和mutable_buffer的参数了
+
+
+//可扩展缓冲区是在向其写入新数据时动态增加其大小的缓冲区
+//它们通常用于在传入消息的大小未知时从套接字读取数据
+//某些应用程序层协议未定义消息的确切大小
+//相反,消息的边界由消息本身末尾的特定符号序列表示,或者由发送者在完成发送消息后
+//发出的传输协议服务消息文件结束(EOF)表示
+//例如,根据HTTP协议,请求和响应消息的标头部分没有固定长度,其边界由四个
+//ASCII符号序列表示<CR><LF><CR><LF>,这是消息的一部分
+//在这种情况下,Boost.Asio库提供动态可扩展缓冲区和可以使用它们的函数非常有用
+//
+//可扩展的面向流的缓冲区在Boost.Asio中用asio::streambuf类表示,它是typedef asio::basic_streambuf<> streambuf;
+//asio::basic_streambuf<>类继承自std::streambuf,这意味着它可以用作STL流类的流缓冲区
+//除此之外,Boost.Asio提供的几个I/O函数处理表示为此类对象的缓冲区
+//我们可以用asio::streambuf类的对象,就像我们处理从std::streambuf类继承的任何流缓冲类一样
+//例如,我们可以将此对象分配给流
+//std::istream,std::ostream或std::iostream,具体取决于我们的需要
+//然后使用stream的运算符<<()和>>()用于流中写入和读取数据
+//p62
 int main() {
 
 	//====CH.1====
@@ -667,5 +815,7 @@ int main() {
 	//Create_Server_TCP_SYN();
 
 	//====CH.2====
+	//Create_Const_Buffer();
+	//Create_Mutable_Buffer();
 	std::system("pause");
 }
