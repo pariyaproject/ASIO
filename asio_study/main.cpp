@@ -799,6 +799,226 @@ int Create_Mutable_Buffer() {
 //std::istream,std::ostream或std::iostream,具体取决于我们的需要
 //然后使用stream的运算符<<()和>>()用于流中写入和读取数据
 //p62
+
+//示例程序,实例化asio::strembuf的对象,向其写入一些数据,然后将数据从缓冲区读回到std::string类对象
+int Test_Buffer_IO() {
+	asio::streambuf buf;
+
+	//输出流对象将数据重定向到buf流缓冲区
+	//通常,在典型的客户端或服务器应用程序中数据将通过Boost.Asio输入函数
+	//(例如asio::read())写入buf流缓冲区,该函数接受流缓冲区对象作为参数并从中读取数据,套接字
+	//到该缓冲区,现在要从流缓冲区读回数据,为此,我们分配一个名为
+	//message1的字符串对象,然后使用std::getline函数读取当前存储在buf流缓冲区中的
+	//部分字符串,直到分隔符符号为\n
+	//因此,string1对象包含Messages1,而buf流缓冲区包含分隔符号后面的其余初始字符串,Message2
+	std::ostream output(&buf);
+
+	output << "Messages1\nMessages2";
+
+	std::istream input(&buf);
+
+	std::string message1;
+
+	std::getline(input, message1);
+
+	std::cout << message1 << std::endl;
+
+	std::getline(input, message1);
+
+	std::cout << message1 << std::endl;
+
+	std::getline(input, message1);
+
+	std::cout << message1 << std::endl;
+	//输出
+	//Messages1
+	//Messages2
+	//Messages2
+
+	return 0;
+}
+//写入TCP套接字是一种输出操作,用于将数据发送到连接到此套接字的远程应用程序
+//同步写入是使用Boost.Asio提供的套接字发送数据的最简单方法
+//执行同步写入套接字的方法和函数会阻塞执行的线程,并且在将数据(至少一些
+//数据量)写入套接字或发生错误之前不会返回
+
+//写入Boost.Asio库提供的套接字的最基本方法是使用asio::ip::tcp::socket类的
+//write_sonme()方法,以下是方法的重载之一的声明
+/*template<
+typename ConstBufferSequence>
+std::size_t write_some(
+const ConstBufferSequence & buffers);*/
+//此方法接受一个表示复合缓冲区作为参数的对象,顾名思义,它将一些数据从缓冲区写入套接字
+//如果方法成功,则返回值表示写入的字节数,这里要强调的是,该方法可能不会发送通过buffers参数提供给它的所有
+//数据,该方法仅保证在未发生错误时至少写入一个字节,这意味着,在一般情况下,为了将所有数据从
+//缓冲区写入套接字,我们可能需要多次调用此方法
+
+//以下算法描述了将数据同步写入分布式应用程序中的TCP套接字所需的步骤
+//1.在客户端应用程序中,分配,打开和连接活动的TCP套接字,在服务器应用程序中,通过使用接受器
+//套接字接受连接请求来获取连接的活动TCP套接字
+//2.分配缓冲区并将其填入要写入套接字的数据
+//3.在循环中,调用套接字的wriet_some()方法多次,以便发送缓冲区中可用的所有数据
+void WriteToSocket(asio::ip::tcp::socket &sock) {
+	//Step 2
+	std::string buf = "Hello ...";
+
+	std::size_t total_bytes_written = 0;
+
+	unsigned short times = 0;
+	//Step 3
+	while (total_bytes_written != buf.length()) {
+		//注意,write_some()返回的值是调用此函数期间
+		//成功写入的字节数
+		//在单次调用write_some()方法期间写入套接字的字节数取决于几个因素
+		//一般情况下,开发人员不知
+		total_bytes_written += sock.write_some(
+			asio::buffer(buf.c_str() +
+				total_bytes_written,
+				buf.length() - total_bytes_written));
+		++times;
+	}
+	//本机测试是只用了一次write_some调用就全部发送了
+	std::cout << "Times = " << times << std::endl;
+}
+
+int Test_First_Client_TCP() {
+
+	std::cout << "Client:" << std::endl;
+	//这个一般放在try里面endpoint声明后面
+	asio::io_service ios;
+
+	try {
+		//可能抛出异常
+		asio::ip::tcp::endpoint ep(asio::ip::address::from_string("127.0.0.1"), 3333);
+		//可能抛出异常
+		asio::ip::tcp::socket sock(ios, ep.protocol());
+		sock.connect(ep);
+
+		//buffer
+		//std::string buf = "Hello, Server!";
+		//asio::const_buffer buff = asio::buffer(buf);
+
+		//sock.write_some(buff);
+
+		//调用循环write_some方法发送
+		WriteToSocket(sock);
+
+		//Read
+		//这里使用unique_ptr可能是因为mutable_buffer并不负责释放在堆上申请的内存空间,直接交给unique_ptr处理
+		asio::mutable_buffer input(static_cast<void *>((std::unique_ptr<char[]>(new char[20])).get()), 20);
+		//这里read_some返回的是已经读取到的字节数
+		//与asio::buffer_size()不同(返回的是总的缓冲区的大小)
+		std::size_t bytes = sock.read_some(input);
+		//从缓冲区读取内存,先cast为char*,再限制读取的字节数
+		std::string data(asio::buffer_cast<char *>(input), bytes);
+		
+
+		std::cout << data << std::endl;
+
+	}
+	catch (boost::system::system_error &e) {
+		std::cout << "Error, Code = "
+			<< e.code() << ", Message = "
+			<< e.what() << std::endl;
+		return e.code().value();
+	}
+	return 0;
+
+}
+int Test_First_Server_TCP() {
+	std::cout << "Server:" << std::endl;
+
+	
+
+	unsigned short MAX_SEQ_SIZE = 50;
+
+	try {
+		asio::io_service ios;
+		//可能异常
+		asio::ip::tcp::endpoint ep(asio::ip::tcp::v4(), 3333);
+		//
+		asio::ip::tcp::acceptor acceptor(ios);
+
+		//不要忘记acceptor也要首先open才能被真正关联底层套接字
+		//否则会报错 提供的文件句柄无效
+		acceptor.open(ep.protocol());
+		//不要忘记bind,bind一般只用在服务端
+		//bind绑定的是本机的信息,endpoint(主机可用的所有IP,本机开放的端口)
+		acceptor.bind(ep);
+		//只是绑定不行,还要切换到监听状态,同时给予消息队列的最大值
+		acceptor.listen(MAX_SEQ_SIZE);
+
+		//请注意此处不能直接打开sock
+		asio::ip::tcp::socket sock(ios);
+
+		//因为accept函数会协助打开,给予更多的信息(协议和具体的IP地址)
+		acceptor.accept(sock);
+
+		//Read
+		asio::mutable_buffer input(static_cast<void *>((std::unique_ptr<char[]>(new char[20])).get()), 20);
+		std::size_t bytes = sock.read_some(input);
+
+		std::string data(asio::buffer_cast<char *>(input), bytes);
+
+
+		std::cout << data << std::endl;
+		//[注意]
+		//这里碰到一个问题,直接使用asio::streambuf作为sock.read_some()
+		//的参数会报错,
+
+		//Write
+		//因为是本机,只用了一次就将write_some发送完毕
+		std::string buf = "Yeah Client!";
+		asio::const_buffer buff = asio::buffer(buf);
+
+		sock.write_some(buff);
+
+		//[注意]
+		//服务器accept成功之后一定要先read不能write,
+		//这样会造成read_some连接中断
+
+	}
+	catch (boost::system::system_error &e) {
+		std::cout << "Error, Code = "
+			<< e.code() << ", Message = "
+			<< e.what() << std::endl;
+		return e.code().value();
+	}
+	return 0;
+
+}
+//测试以上的函数
+int Test_First_TCP() {
+	std::cout << "Select Your Func:"
+		<< "\nTest_First_Client_TCP = 0"
+		<< "\nTest_First_Server_TCP = 1"
+		<< std::endl;
+	unsigned IServer;
+	std::cin >> IServer;
+	if (IServer != 0) {
+		Test_First_Server_TCP();
+	}
+	else {
+		Test_First_Client_TCP();
+	}
+	return 0;
+}
+
+//asio::ip::tcp::socket类包含另一种将数据同步写入名为send()的套接字
+//的方法,这种方法有三种重载
+//其中一个等同于write_some()方法,如前所述,它具有完全相同的签名和功能
+//与write_some()方法相比,第二个重载接受额外的参数
+//
+/*template<
+typename ConstBufferSequence>
+std::size_t send(
+ const ConstBufferSequence & buffers,
+ socket_base::message_flags flags);*/
+//这个附加参数名为flags,它可用于指定位掩码,表示控制操作的标志
+//因为很少使用这些标志,所以不会考虑它
+//第三个重载相当于第二个重载,但在发生问题时不会抛出异常,相反,通过
+//error_code类型的附加方法输出参数返回
+//p68
 int main() {
 
 	//====CH.1====
@@ -817,5 +1037,7 @@ int main() {
 	//====CH.2====
 	//Create_Const_Buffer();
 	//Create_Mutable_Buffer();
+	//Test_Buffer_IO();
+	//Test_First_TCP();
 	std::system("pause");
 }
