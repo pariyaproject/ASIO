@@ -911,7 +911,7 @@ int Test_First_Client_TCP() {
 		std::size_t bytes = sock.read_some(input);
 		//从缓冲区读取内存,先cast为char*,再限制读取的字节数
 		std::string data(asio::buffer_cast<char *>(input), bytes);
-		
+
 
 		std::cout << data << std::endl;
 
@@ -928,7 +928,7 @@ int Test_First_Client_TCP() {
 int Test_First_Server_TCP() {
 	std::cout << "Server:" << std::endl;
 
-	
+
 
 	unsigned short MAX_SEQ_SIZE = 50;
 
@@ -1018,7 +1018,231 @@ std::size_t send(
 //因为很少使用这些标志,所以不会考虑它
 //第三个重载相当于第二个重载,但在发生问题时不会抛出异常,相反,通过
 //error_code类型的附加方法输出参数返回
-//p68
+//p68d
+
+//使用套接字的write_some()方法写入套接字对于这种简单的操作来说似乎非常
+//复杂,即使想要发送一个由几个字节组成的小小处,也必须使用一个循环,一个变量来跟踪已经
+//写入了多少字节,并为循环的每次迭代正确构造一个缓冲区
+//这种方法容易出错,使代码更难理解.
+//幸运的是,Boost.Asio提供了一个免费的功能,简化了对的写入,这个函数叫做asio::write()
+/*template<
+typename SyncWriteStream,
+typename ConstBufferSequence>
+std::size_t write(
+SyncWriteStream & s,
+const ConstBufferSequence & buffers);*/
+//此函数接受两个参数,第一个命名为s的是对满足SyncWriteStream概念要求的对象的引用
+//有关要求的完整列表,请查文档
+//表示TCP套接字的asio::ip::tcp::socket类的对象满足这些要求,因此可以用作函数的第一个参数
+//名为buffers的第二个参数表示缓冲区(简单或复合),并包含要写入套接字的数据
+//与write_some()方法相反,后者将一些数据从缓冲区写入套接字,asio::write()函数写入缓冲区中可用的所有数据
+//这简化了对套接字的写入,使代码更简洁,更清晰,如果我们使用asio::write()函数而还是套接字对象的write_some()方法
+//将数据写入套接字,那么上一个例子中writeToSocket()函数就会如下所示
+void writeToSocketEnhanced(asio::ip::tcp::socket &sock) {
+	std::string buf = "hello ...";
+
+	asio::write(sock, asio::buffer(buf));
+}
+//asio::write()函数的实现方式类似于原始的writeToSkcket()函数,是通过在循环中多次调用socket对象的write_some()方法实现的
+
+//从TCP套接字读取是一种输入操作,用于接收连接到此套接字的远程应用程序发送的数据
+//同步读取是使用Boost.Asio提供的套接字接收数据的最简单方法
+//从套接字执行同步读取的方法和函数会阻塞执行的线程,并且在从套接字读取数据
+//(至少一些数据量)或发生错误之前不会返回
+
+//从Boost.Asio库提供的套接字读取数据的最基本方法是asio::ip::tcp::socket类的read_some()方法
+/*template<
+typename MutableBufferSequence>
+std::size_t read_some(
+ const MutableBufferSequence & buffers);*/
+//这个方法接受一个表示可写缓冲区(单个或复合)作为参数的对象,顾名思义,它
+//从套接字向缓冲区读取一些数据量,如果方法成功,则返回值表示读取的字节数
+//重要的是要注意,无法控制方法读取的字节数,该方法仅保证在未发生错误时至少读取一个字节
+//这意味着,在一般情况下,为了从套接字读取一定是的数据,我们可能需要多次调用该方法
+
+//以下算法描述了从分布式应用程序中的TCP套接字同步读取数据所需的步骤
+//1.在客户端应用程序中,分配,撕开和连接活动的TCP,在服务器应用程序中,通过使用接受器
+//套接字接受请求来获取连接的活动TCP套接字
+//2.分配足够大小的缓冲区以适合要读取的预期消息
+//3.在循环中,调用套接字的read_some()方法的次数与读取消息所需的次数相同
+
+std::string readFromeSocket(asio::ip::tcp::socket &sock) {
+	const unsigned char MESSAGE_SIZE = 7;
+	char buf[MESSAGE_SIZE];
+	std::size_t total_bytes_read = 0;
+
+	while (total_bytes_read != MESSAGE_SIZE) {
+		total_bytes_read += sock.read_some(
+			asio::buffer(buf + total_bytes_read,
+				MESSAGE_SIZE - total_bytes_read));
+	}
+	//在单次调用read_some()方法期间从套接字读取的字节数取决于几个因素
+	//在一般情况下,开发人员不知道,因此应当使用循环来读取套接字中的所有数据
+	return std::string(buf, total_bytes_read);
+}
+
+int Read_Some_SYN() {
+	std::string raw_ip_address = "127.0.0.1";
+	unsigned short port_num = 3333;
+
+	try {
+		asio::ip::tcp::endpoint ep(asio::ip::address::from_string(raw_ip_address), port_num);
+
+		asio::io_service ios;
+
+		asio::ip::tcp::socket sock(ios, ep.protocol());
+
+		sock.connect(ep);
+		//sokc参数传递时必须已经connect(),否则失效
+		readFromeSocket(sock);
+	}
+	catch (boost::system::system_error &e) {
+		std::cout << "Error, Code = "
+			<< e.code() << ", Message = "
+			<< e.what() << std::endl;
+		return e.code().value();
+	}
+	return 0;
+}
+//asio::ip::tcp::socket类包含另一种套接字同步读取数据的方法
+//称为receive(),这种方法有三种重载,其中一个等同于read_some()方法,如前所述
+//它具有完全相同的签名,并提供完全相同的功能,这些方法在某种意义上是同义词
+//与read_some()方法相比,第二个重载接受一个额外的参数
+/*template<
+ typename MutableBufferSequence>
+std::size_t receive(
+ const MutableBufferSequence & buffers,
+ socket_base::message_flags flags);*/
+//这个附加参数名为flags,它可用于指定位掩码,表示控制操作的标志,
+//由于很少使用这些标志,因此我们不会在本书中考虑
+//第三个重载相当于第二个,但在发生错误时不会抛出异常而是通过boost::system::error_code类型的附加输出参数返回错误信息
+//[注意]
+//写入套接字的write_some与send方法与这里的
+//读取套接字的read_some与receive方法类似
+
+//使用套接字的read_some（）方法从套接字读取对于这种简单的操作来说似乎非常复杂。
+//这种方法要求我们使用循环，变量来跟踪已经读取了多少字节，并为循环的每次迭代正确构造缓冲区。
+//这种方法容易出错，使代码更难以理解和维护。
+//幸运的是，Boost.Asio提供了一系列免费函数，可以简化从不同上下文中的套接字同步读取数据的过程
+//有三个这样的函数,每个函数都有几个重载,提供了丰富的功能,便于从套接字读取数据
+//
+//[1]
+//asio::read()函数
+//它是三个函数中最简单的一个
+/*template<
+typename SyncReadStream,
+typename MutableBufferSequence>
+std::size_t read(
+SyncReadStream & s,
+const MutableBufferSequence & buffers);*/
+//这个函数接受两个参数,第一个名为s的是对满足SyncReadStream概念要求的对象的引用
+//表示 TCP套接字的asio::ip::tcp::socket类的对象满足这些要求,因此可以用作
+//函数的第一个参数,名为buffers的第二个参数表示将从套接字读取数据的缓冲区(简单或复合)
+//与套接字的read_some()函数相反,asio::read()函数在单个调用期间从套接字读取数据,直到
+//一个缓冲区传递给它但发生了错误,这简化了从套接字读取并使代码更清洁
+//如果使用asio::read()方法,前面的readFromSocket()函数将是这样的
+std::string readFromSocketEnhanced(asio::ip::tcp::socket& sock) {
+	const unsigned char MESSAGE_SIZE = 7;
+	char buf[MESSAGE_SIZE];
+	//这个函数调用将阻塞执行线程,直到正好7个字节或发生错误
+	asio::read(sock, asio::buffer(buf, MESSAGE_SIZE));
+
+	return std::string(buf, MESSAGE_SIZE);
+}
+
+//
+//[2]
+//asio::read_until()函数
+//它提供了一种从套接字读取数据直到在数据中遇到指定模式的方法
+//此函数有八个重载
+/*template<
+typename SyncReadStream,
+typename Allocator>
+std::size_t read_until(
+SyncReadStream & s,
+boost::asio::basic_streambuf< Allocator > & b,
+char delim);*/
+//第一个参数名为S的量对满足SyncReadStream概念要求的对象的引用
+//表示TCP套接字的asio::ip::tcp::socket类的对象满足这些要求,因此可以用作函数的第一个参数
+//名为b的第二个参数表示面向流的可扩展缓冲区,其中将读取数据名为delim的最后一个参数指定了分隔符
+//asio::read_until()函数将从s套接字读取数据到缓冲区b直到它遇到数据读取部分中delim参数指定的字符
+//遇到指定的字符时,函数返回
+
+//重要的是要注意asio::read_until()函数的实现是以可变大小的块读取的(就是使用套接字的read_some()方法读取)
+//当函数返回时,缓冲区b可能在分隔符符号后面包含一些符号,远程应用程序在分隔符符号之后发送更多数据
+//(例如,它可能连续发送两个消息,每个消息最后都有一个分隔符),则可能会发生这种情况,换名话说,当asio::read_until()
+//函数成功返回时,保证缓冲区b包含至少一个分隔符符号,或可能包含更多
+//[注意]这个函数会返回包含多出的数据
+//开发人员有责任解析缓冲区中的数据,并在分隔符符号后包含数据时处理该情况
+//如果我们想要从套接字读取所有数据直到遇到特定符号,我们将如下实现readFromSocket()函数
+//假设消息分隔符是一个新的行\n
+std::string readFromSocketDelim(asio::ip::tcp::socket &sock) {
+	asio::streambuf buf;
+
+	//asio::read(sock, buf);//OK
+	asio::read_until(sock, buf, '\n');
+	//以下正确
+	asio::mutable_buffer bufs = buf.prepare(512);
+	//此时buf类型为mutable_buffers_1
+	//or mutable_buffer
+	sock.receive(bufs);
+	//以下是错误的,read_some不能使用asio::streambuf作为参数,即使语法正确
+	//sock.read_some(buf);//error
+	std::string message;
+
+	std::istream input_stream(&buf);
+
+	//注意:message可能包含'\n'之后的数据
+	//但是由于分隔符是'\n'因此调用了getline之后自动分隔了'\n'之后的数据
+	std::getline(input_stream, message);
+
+	return message;
+}
+
+//
+//[3]
+//asio::read_at()函数
+//此函数提供了一种从套接字特定的偏移量开始读取数据的方法
+//但很少使用,函数的实现方式类似于原始的readFromSocket()函数,
+//通过多次调用socket中的read_some()来实现的直到满足终止条件呀发生错误
+
+//[异步]
+//异步写入是一种将数据发送到远程应用程序的灵活而有效的方法
+//用于异步将数据写入Boost提供的套接字的最基本工具
+//是asio::ip::tcp::socket类的async_write_some()方法
+/*template<
+typename ConstBufferSequence,
+typename WriteHandler>
+void async_write_some(
+const ConstBufferSequence & buffers,
+WriteHandler handler);*/
+//此方法启动写入操作并立即返回,它接受一个对象,该对象表示一个缓冲区
+//该缓冲区包含要写入套接字的数据作为其第一个参数
+//第二个参数是一个回调,当一个启动(初始)的操作完成时,它将由Boost.Asio调用
+//此参数可以是函数指针,仿函数或满足WriteHandler概念要求的任何其他对象
+//回调函数应当有以下函数签名
+/*void write_handler(
+ const boost::system::error_code& ec,
+ std::size_t bytes_transferred);*/
+//这里,ec是一个参数,表示出现错误的code,而bytes_transferred参数表示在相应的异步操作
+//期间已向套接字写入了多少字节,正如函数的名字所示,它启动了一个旨在将d一些数据从缓冲区写入套接字
+//的操作,如果没有发生错误,此方法可确保在相应的异步操作期间至少写入一个字节
+//这意味着,在一般情况下,为了将缓冲区中可用的所有数据写入套接字,我们可能需要多次执行此异步
+//操作.
+
+//以下算法描述了执行和实现应用程序所需的步骤,该应用程序异步地将数据写入TCP套接字,
+//请注意,此算法提供了实现此类应用程序的可能方法
+//Boost.Asio非常灵活,允许我们通过以多种不同的方式异步地将数据写入套接字来组织和构建应用程序
+//1.定义一个数据结构,其中包含一个指向套接字对象的指针,一个缓冲区和一个用作写入字节计数器的变量
+//2.定义在异步写入操作完成时将调用的回调函数
+//3.在客户端应用程序中,分配并打开活动TCP套接字并将其连接到远程应用程序.在服务器应用程序中
+//通过接受连接请求获取连接的活动TCP套接字
+//4.分配一个缓冲区并用要写入套接字的数据填充它
+//5.通过调用套接字的async_write_some()方法启动异步写入操作
+//6.在asio::io_service类的对象上调用run()方法;
+//7.在回调中,增加写入的字节计数器,如果写入的字节数小于要写入的总字节数,
+//则启动新的异步写入操作以写入下一部分数据
+//p78
 int main() {
 
 	//====CH.1====
