@@ -1243,6 +1243,124 @@ WriteHandler handler);*/
 //7.在回调中,增加写入的字节计数器,如果写入的字节数小于要写入的总字节数,
 //则启动新的异步写入操作以写入下一部分数据
 //p78
+
+//Step 1
+//定义一个数据结构,其中包含一个指向套接字对象的指针,一个
+//包含要写入的数据的缓冲区,以及一个包含已写入的字节数的计数器变量
+struct Session {
+	std::shared_ptr<asio::ip::tcp::socket> sock;
+	std::string buf;
+	std::size_t total_bytes_written;
+};
+//Step 2
+//定义一个回调函数,它将在异步操作完成时调用
+void callback(const boost::system::error_code &ec,
+	std::size_t bytes_transferred,
+	std::shared_ptr<Session> s)
+{
+	if (ec.value() != 0) {
+		std::cout << "Error, code = "
+			<< ec.value() << ", Message = "
+			<< ec.message() << std::endl;
+
+		return;
+	}
+
+	s->total_bytes_written += bytes_transferred;
+
+	if (s->total_bytes_written == s->buf.length()) {
+		return;
+	}
+
+	s->sock->async_write_some(
+		asio::buffer(s->buf.c_str() + s->total_bytes_written,
+			s->buf.length() - s->total_bytes_written),
+		std::bind(callback, std::placeholders::_1, std::placeholders::_2, s));
+
+}
+//先跳过步骤3,并在单独的函数中实现步骤4和5
+void writeToSocket2(std::shared_ptr<asio::ip::tcp::socket> sock) {
+	
+	//首先在空闲内存中分配Session数据结构的实例
+	std::shared_ptr<Session> s(new Session);
+
+	//Step 4
+	//填充这个实例,并将参数传递给这个对象的sock指针
+	s->buf = std::string("Hello");
+	s->total_bytes_written = 0;
+	s->sock = sock;
+
+	//Step 5
+	//因为套接字的async_write_some()方法可能无法一次性将所有数据写入
+	//套接字,所以我们可能需要在回调函数中启动另一个异步写操作
+	//这就是我们需要Session对象的原因,我们将它分配给空闲内存(堆)而不是栈;
+	//因为它必须存在,直到调用回调函数,最后我们启动异步操作,调用socket对象的async_write_some()方法
+
+	//第一个参数是缓冲区,其中包含要写入套接字的数据
+	//因为操作是异步的,所以Boost.Asio可能在操作启动和回调函数被调用时访问buffer
+	//,这意味着缓冲区必须保持不变,并且必须可用才能调用回调
+	//我们通过将缓冲区存储在Session对象中来保证这一点,而Session对象又存储在空闲内存(堆)中
+	//第二个参数是在异步操作完成时要调用的回调
+	//Boost.Asio将回调定义为一个概念,它可以是函数或函数对象,接受两个参数
+	//回调的第一个参数指定在执行操作时发生的错误(如果有)
+	//第二个参数指定操作已经写入的字节数
+
+	//因为我们想要向我们的回调函数传递一个额外的参数,一个指向相应Session对象的指针
+	//它作为操作的上下文,我们使用std::bind()函数来构造一个我们附加一个
+	//指向Session对象的指针作为第三个参的函数对象
+	//然后将函数对象作为回调参数传递给套接字对象的async_write_some()方法,
+	//因为它是异步的,所以async_write_some方法不会阻止执行的线程
+	//它启动写入操作并返回,实际的写入操作由Boost.Asio库和底层操作系统在幕后执行,当
+	//操作完成或发生错误时,将调用回调,调用时,我们的示例应用程序中名为callback的回调函数检查操作
+	//是否成功或是否发生错误开始,在后一种情况下,错误信息输出到标准输出流并返回函数
+	//否则,总写入字节的计数器增加了作为操作结果写入的字节数
+	//然后,我们检查写入套接字的总数是否等于缓冲区的大小,如果这些值相等,这意味着所有数据都已写入套接字,
+	//并且没有其他工作要做,回调函数返回,但是如果要写入的缓冲区中仍有数据,则启动新的异步写入操作
+	s->sock -> async_write_some(
+		asio::buffer(s->buf),
+		std::bind(callback,
+			std::placeholders::_1,
+			std::placeholders::_2,
+			s));
+
+}
+//现在回到Step 3
+int First_ASYN_TCP_Write(){
+	std::string raw_ip_address = "127.0.0.1";
+	unsigned short port_num = 3333;
+
+	//[注意]
+	//Boost.Asio可能会为某些内部操作创建其他线程,但它保证在这些线程
+	//的上下文中不执行任何应用程序代码
+
+	//分配,打开并同步将套接字连接到远程应用程序中,然后通过将指针传递给
+	//套接字对象来调用writeToSocket()函数
+	//此函数启动异步写入操作并返回
+	//此函数继续调用asio::io_service类的对象上的run()方法
+	//其中Boost.Asio捕获执行线程并在完成时使用它来调用与异步操作相关的回调函数
+	//只要至少有一个挂起的异步操作,asio::ioservice::run()方法就会
+	//阻塞,当最后一个挂起的异步操作最后一个回调完成时,此方法返回
+	//
+	try {
+		asio::ip::tcp::endpoint ep(asio::ip::address::from_string(raw_ip_address), port_num);
+
+		asio::io_service ios;
+		std::shared_ptr<asio::ip::tcp::socket> sock(new asio::ip::tcp::socket(ios, ep.protocol()));
+
+		sock->connect(ep);
+
+		writeToSocket2(sock);
+
+		//Step 6
+		ios.run();
+	}
+	catch (boost::system::system_error& e) {
+		std::cout << "Error occured! Error code = " << e.code()
+			<< ". Message: " << e.what();
+		return e.code().value();
+	}
+	return 0;
+}
 int main() {
 
 	//====CH.1====
