@@ -1269,6 +1269,7 @@ void callback(const boost::system::error_code &ec,
 	s->total_bytes_written += bytes_transferred;
 
 	if (s->total_bytes_written == s->buf.length()) {
+		std::cout << "===Send OK===" << std::endl;
 		return;
 	}
 
@@ -1286,7 +1287,7 @@ void writeToSocket2(std::shared_ptr<asio::ip::tcp::socket> sock) {
 
 	//Step 4
 	//填充这个实例,并将参数传递给这个对象的sock指针
-	s->buf = std::string("Hello");
+	s->buf = std::string("Hello123456789");
 	s->total_bytes_written = 0;
 	s->sock = sock;
 
@@ -1316,6 +1317,13 @@ void writeToSocket2(std::shared_ptr<asio::ip::tcp::socket> sock) {
 	//否则,总写入字节的计数器增加了作为操作结果写入的字节数
 	//然后,我们检查写入套接字的总数是否等于缓冲区的大小,如果这些值相等,这意味着所有数据都已写入套接字,
 	//并且没有其他工作要做,回调函数返回,但是如果要写入的缓冲区中仍有数据,则启动新的异步写入操作
+
+	//注意缓冲区的开头如何移动已经写入的字节数,以及缓冲区的大小如何相应地减小相同的值
+	//作为回调,我们使用std::bind()函数指定相同的callback()函数并附加一个额外的参数
+	//Session对象,就像我们启动第一个异步操作时一样
+	//启动异步写入操作和后续回调调用的循环重复,直到缓冲区中的所有数据都写入套接字或发生
+	//错误,当回调函数返回而不启动新的异步操作时,在main()函数中调用的asio::io_service::run()方法
+	//将解除执行线程的阻塞并返回,main函数也会返回,这是应用程序退出的时间
 	s->sock -> async_write_some(
 		asio::buffer(s->buf),
 		std::bind(callback,
@@ -1349,6 +1357,8 @@ int First_ASYN_TCP_Write(){
 
 		sock->connect(ep);
 
+		std::cout << "---Connect OK---" << std::endl;
+
 		writeToSocket2(sock);
 
 		//Step 6
@@ -1361,6 +1371,257 @@ int First_ASYN_TCP_Write(){
 	}
 	return 0;
 }
+
+//虽然上一个示例中描述的async_write_some()方法允许异步地将数据写入套接字,
+//但基于它的方案有点复杂且容易出错,幸运的是,Boost.Asio提供了一种使用free函数
+//asio::async_write()以异步方式将数据写入套接字的方法
+//
+/*template<
+typename AsyncWriteStream,
+typename ConstBufferSequence,
+typename WriteHandler>
+void async_write(
+AsyncWriteStream & s,
+const ConstBufferSequence & buffers,
+WriteHandler handler);*/
+//
+//此函数与套接字的async_write_some()方法非常相似
+//它的第一个参数是满足AsyncWriteStream概念要求的对象
+//asio::ip::tco::socket类的对象满足这些要求,因此可以与此函数一起使用
+//asio::async_write()函数的第二个和第三个参数类似于上一个示例中描述的TCP
+//套接字的async_write_some()方法的第一个和第二个参数
+//这些参数是包含要写入的数据的缓冲区以及表示回调的函数或对象,将在操作完成时调用
+//与套接字的async_write_some()方法(启动将一些数据从缓冲区写入套接字的操作)相反
+//asio::async_write()函数启动操作,该操作写入缓冲区中可用的所有数据
+//在这种情况下,只有当缓冲区中的所有可用数据都写入套接字或发生错误时才会调用回调
+//这简化了对套接字的写入,使代码更简洁,更清晰.
+//
+//使用asio::async_write()函数来重写
+//首先,我们不需要跟踪写入套接字的字节数,因此,Session结构变得更小
+struct Session2 {
+	std::shared_ptr<asio::ip::tcp::socket> sock;
+	std::string buf;
+};
+//之后,我们知道当调用回调函数时,这意味着来自缓冲区的所有数据都已写入套接字或发生了错误
+//这使得回调函数更加简单
+void callback2(const boost::system::error_code &ec,
+	std::size_t bytes_transferred,
+	std::shared_ptr<Session2> s)
+{
+	if (ec.value() != 0) {
+		std::cout << "Error, code = "
+			<< ec.value() << ", Message = "
+			<< ec.message() << std::endl;
+		return;
+	}
+
+	//这里,我们知道所有的数据已经传出
+}
+//asio::async_write()函数是通过对套接字对象的async_write_some()方法进行零次
+//或多次调用来实现的,这类似于我们初始样本中的writeToSocket()函数的实现方式
+//注意,asio::async_write还有三个重载,提供了额外的功能
+//
+
+//异步读取是一种从远程应用程序接收数据的灵活而有效的方法
+
+//用于从Boost.Asio库提供的TCP套接字异步读取数据的最基本工具是
+//asio::ip::tcp::socket类的async_read_some()方法
+//这是方法的重载之一
+/*template<
+typename MutableBufferSequence,
+typename ReadHandler>
+void async_read_some(
+const MutableBufferSequence & buffers,
+ReadHandler handler);*/
+//此方法启动异步读取操作并立即返回,它接受一个表示可变缓冲区的对象
+//作为从套接字读取数据的第一个参数,第二个参数是一个回调,当操作完成时由Boost.Asio
+//调用,此参数可以是函数指针,仿函数或满足ReadHandle概念要求的其他对象
+//回调应具有以下签名:
+/*void read_handler(
+const boost::system::error_code& ec,
+std::size_t bytes_transferred);*/
+//这里,ec是一个参数,如果出现错误代码则通知错误代码
+//bytes_transferred参数指示在相应的异步操作期间从套接字读取了多少字节
+//正如async_read_some()方法的名称所暗示的那样,它启动一个操作,旨在从套接字读取一些数据到缓冲区
+//如果没有发生错误,此方法可确保在相应的异步操作期间至少读取一个字节
+//这意味着,在一般情况下,为了从套接字读取所有数据,我们可能需要多次执行此异步操作
+//现在,我们知道了key方法的工作原理
+
+//以下算法描述了实现应用程序所需步骤,该应用程序异步读取套接字中的数据
+//请注意,此算法提供了实现此类应用程序可能方法
+//1.定义一个数据结构,其中包含一个指向套接字对象的指针,一个缓冲区,
+//一个定义缓冲区大小的变量,心腹一个用作读取字节计数器的变量
+//2.定义在异步读取操作完成时将调用的回调函数
+//3.在客户端应用程序中,分配并打开活动的TCP套接字,然后将其连接到远程应用程序
+//在服务器应用程序中,通过接受连接请求获取连接的活动TCP套接字
+//4.分配足够大的缓冲区心使预期消息适合
+//5.调用套接字的async_read_some()方法启动异步读取操作,将步骤2中定义的函数
+//指定为回调
+//6.在asio::io_service类的对象上调用run()方法
+//7.在回调中,增加读取的字节数,如果读取的字节数小于要读取的总字节数(预期消息的大小)
+//则启动新的异步读取操作以读取下一部分数据
+
+//根据Step 1 定义一个数据结构,其中包含一个指向名为sock的套接字对象的指针,
+//一个指向名为buf的缓冲区的指针,一个名为buf_size的变量,其中包含缓冲区的大小,以及一个包含该变量
+//的total_bytes_read变量,指示已读取的字节数
+
+struct Session3 {
+	std::shared_ptr<asio::ip::tcp::socket> sock;
+	std::unique_ptr<char[]> buf;
+	std::size_t total_bytes_read;
+	unsigned int buf_size;
+};
+//Step 2 定义一个回调函数
+void callback3(const boost::system::error_code &ec,
+	std::size_t bytes_transferred,
+	std::shared_ptr<Session3> s) {
+
+	if (ec.value() != 0) {
+		std::cout << "Error" << std::endl;
+		return;
+	}
+
+	s->total_bytes_read += bytes_transferred;
+
+	if (s->total_bytes_read == s->buf_size) {
+		std::cout << "===Read OK!===" << std::endl
+			<< std::string(s->buf.get(), s->buf_size) << std::endl;
+		return;
+	}
+
+	s->sock->async_read_some(
+		asio::buffer(
+			s->buf.get() +
+			s->total_bytes_read,
+			s->buf_size - s->total_bytes_read),
+		std::bind(callback3, std::placeholders::_1,
+			std::placeholders::_2, s));
+
+}
+void readFromSocket(std::shared_ptr<asio::ip::tcp::socket> sock) {
+	std::shared_ptr<Session3> s(new Session3);
+
+	//Step 4
+	const unsigned int MESSAGE_SIZE = 7;
+
+	s->buf.reset(new char[MESSAGE_SIZE]);
+	s->total_bytes_read = 0;
+	s->sock = sock;
+	s->buf_size = MESSAGE_SIZE;
+
+	//Step 5
+	s->sock->async_read_some(
+		asio::buffer(
+			s->buf.get(), s->buf_size),
+		std::bind(callback3, std::placeholders::_1,
+			std::placeholders::_2, s));
+
+
+}
+int First_ASYN_TCP_Read() {
+	unsigned short port_num = 3333;
+
+	try {
+		asio::ip::tcp::endpoint ep(
+			asio::ip::address_v4::any(),
+			port_num
+		);
+		asio::io_service ios;
+		asio::ip::tcp::acceptor acceptor(ios, ep.protocol());
+		acceptor.bind(ep);
+
+		acceptor.listen();
+
+		std::shared_ptr<asio::ip::tcp::socket> sock(new asio::ip::tcp::socket(ios));
+
+		acceptor.accept(*sock);
+
+		std::cout << "---Accept OK---" << std::endl;
+
+		readFromSocket(sock);
+
+		//只要至少有一个挂起的异步操作,io_service::run()方法就会阻塞
+		//当最后一个挂起操作的最后一个回调完成时,此方法返回
+		ios.run();
+	}
+	catch (boost::system::system_error &e) {
+
+		return e.code().value();
+	}
+	return 0;
+}
+//测试异步消息传输
+int Test_First_TCP_ASYN() {
+	std::cout << "Select Your Func:"
+		<< "\nTest_First_Client_TCP = 0"
+		<< "\nTest_First_Server_TCP = 1"
+		<< std::endl;
+	unsigned IServer;
+	std::cin >> IServer;
+	if (IServer != 0) {
+		First_ASYN_TCP_Read();
+	}
+	else {
+		First_ASYN_TCP_Write();
+	}
+	return 0;
+}
+//尽管async_read_some方法允许从套接字异步读取数据,但基于它的解决方法
+//有点复杂且容量出错
+//使用asio::async_read()
+/*template<
+typename AsyncReadStream,
+typename MutableBufferSequence,
+typename ReadHandler>
+void async_read(
+AsyncReadStream & s,
+const MutableBufferSequence & buffers,
+ReadHandler handler);*/
+//这个函数会启动从套接字读取数据的操作,直到缓冲区填满
+struct Session4 {
+	std::shared_ptr<asio::ip::tcp::socket> sock;
+	std::unique_ptr<char[]>buf;
+	std::size_t buf_size;
+};
+void callback4(const boost::system::error_code& ec,
+	std::size_t bytes_transferred,
+	std::shared_ptr<Session4> s) {
+	if (ec.value() != 0) {
+		return;
+	}
+
+	//此时可变缓冲区已经填满了
+}
+//asio::async_read内部实现也是多次调用了socket的async_read_some方法
+
+//有时,在启动异步操作并且尚未完成之后,应用程序中的条件可能会发生
+//变化,以致启动的操作变得无关紧要或过时,并且没有人对完成操作感兴趣
+//除此之外,如果启动的异步操作是对用户命令的反应,则用户可以在执行操作时改变主意
+//用户可能想要丢弃先前发出的命令,并且可能想要发出不同的命令或决定退出应用程序
+//考虑用户在典型的Web浏览器的地址栏中写入网站地址并按Enter的情况
+//浏览器立即启动DNS名称解析操作,解析DNS名称并获取相应IP地址后,将启动连接操作
+//以向服务器发送请求,最后当发送请求时,浏览器开始等待响应消息,取决于服务器应用程序的
+//响应性,通过网络传输的数据量,网络状态和其他因素,所有这些操作可能花费大量时间
+//并且用户在等待加载所有请求的网页时可能会改变主意,并且在页面加载之前,用户可以在地址栏中
+//写入另一个网站并Enter,另一个极端情况是客户端应用程序向服务器应用程序发送请求
+//并开始等待响应消息,但服务器应用程序在处理客户端请求时,出错陷入死锁
+//这种情况下,用户必须永远等待
+
+//这两种情况下,客户端应用程序的用户都将能够在完成之前取消他们的启动的操作
+//通常,为用户提供取消可能花费大量时间的操作的能力是一种好的做法,由于网络通信操作属于可能持续不可
+//预测的长时间的一类操作,因此支持取消通过网络通信的分布式应用程序中的操作非常重要
+//Boost.Asio库提供的异步操作的一个好处是它们可以在启动后的任何时刻取消
+//
+//以下算法提供了使用Boost.Asio启动和取消异步操作所需的步骤
+//1.如果应用程序要在XP或2003上运行,请定义这些版本的WIN上启用异步操作取消的标志
+//2.分配并打开TCP或UDP套接字,它可以是客户端或服务器应用程序中的主动或被动(acceptor)套接字
+//3.为异步操作定义回调函数或函数对象,如果需要,在此回调中,实现一个代码分支,用于处理操作时的情况
+//4.启动一个或多个异步操作,并将步骤4中定义的函数指定为回调
+//5.生成一个额外的线程并使用它来运行Boost.Asio事件循环
+//6.在套接字对象上调用cancel()方法以取消与此套接字关联的所有未完成的异步操作
+//
+
+
 int main() {
 
 	//====CH.1====
@@ -1381,5 +1642,6 @@ int main() {
 	//Create_Mutable_Buffer();
 	//Test_Buffer_IO();
 	//Test_First_TCP();
+	Test_First_TCP_ASYN();
 	std::system("pause");
 }
