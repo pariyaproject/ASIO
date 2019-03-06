@@ -1,5 +1,7 @@
 #include<iostream>
+#define BOOST_ASIO_ENABLE_CANCELIO
 #include<boost/asio.hpp>
+#include<thread>
 using namespace boost;
 //basic
 //在创建端点（endpoint）之前，客户端应用程序必须获取原始IP地址和指定将与之通信的服务器的协议端口号
@@ -1615,13 +1617,256 @@ void callback4(const boost::system::error_code& ec,
 //以下算法提供了使用Boost.Asio启动和取消异步操作所需的步骤
 //1.如果应用程序要在XP或2003上运行,请定义这些版本的WIN上启用异步操作取消的标志
 //2.分配并打开TCP或UDP套接字,它可以是客户端或服务器应用程序中的主动或被动(acceptor)套接字
-//3.为异步操作定义回调函数或函数对象,如果需要,在此回调中,实现一个代码分支,用于处理操作时的情况
+//3.为异步操作定义回调函数或函数对象,如果需要,在此回调中,实现一个代码分支,用于处理取消操作时的情况
 //4.启动一个或多个异步操作,并将步骤4中定义的函数指定为回调
 //5.生成一个额外的线程并使用它来运行Boost.Asio事件循环
 //6.在套接字对象上调用cancel()方法以取消与此套接字关联的所有未完成的异步操作
 //
+//默认情况下为Windows编译时,Boost.Asio使用I/O完成商品框架异步运行操作
+//在win xp和 2003上,此框架在取消操作方面存在一些问题和限制
+//因此,Boost.Asio要求开发人员针对相关windows版本中的应用程序定位时
+//明确通知他们希望启用异步操作取消功能,尽管存在已知问题,为此,必须在包含Boost.Asio头之前
+//定义BOOST_ASIO_ENABLE_CANCELIO宏
+//否则,如果未定义此宏,则当应用程序包含对异步操作,取消方法和函数的调用时,编译将始终
+//失败,也可以通过定义另一个名为BOOST_ASIO_DISABLE_IOCO宏和阻止Boost.Asio使用此框架
+//因此,与异步操作取消相关的问题消失了,但是I/O端口框架的的可伸缩性和效率的好处也消失了
+//注意,在Windows Vista和2008及更高版本上不存在与异步操作取消相关的上述问题和限制
+//因此,在定位这些版本的Win时,取消工作上学,除非有其他原因,否则无需禁用I/O端口框架使用
+//要在编译时确定目标操作系统,我们使用Boost.Predef库
+//该库为我们提供了宏定义,允许我们识别将代码编译为目标操作系统及其版本,处理器体系结构,编译器等
+//的环境参数
 
+//此时需要用到<thread>库
+int ASYNC_CANCEL() {
+	std::string raw_ip_address = "127.0.0.1";
+	unsigned short port_num = 3333;
 
+	try {
+		asio::ip::tcp::endpoint ep(
+			asio::ip::address::from_string(raw_ip_address),
+			port_num
+		);
+
+		asio::io_service ios;
+
+		std::shared_ptr<asio::ip::tcp::socket> sock(new asio::ip::tcp::socket(ios, ep.protocol()));
+
+		//在套接字上启动异步连接操作,提供给该方法的回调实现为lambda函数
+		//取消异步操作时,将调用回调,并且其指定错误代码的参数包含
+		//Boost.Asio中定义的OS相关错误asio::error::operation_aborted
+		//然后,我们生成一个名为worker_thread的线程,该线程用于运行Boost.Asio事件循环
+		//在此线程的上下文中,库将调用回调函数
+		sock->async_connect(ep,
+			[sock](const boost::system::system_error& ec) {
+			if (ec.code().value() != 0) {
+				if (ec.code() == asio::error::operation_aborted) {
+					std::cout << "Operation cancelled!";
+
+				}
+				else {
+					std::cout << "Error, code ="
+						<< ec.code() << ", Message ="
+						<< ec.what() << std::endl;
+					
+				}
+				return;
+			}
+			//此处socket已经连接并可以使用
+		});
+
+		//开启一个线程,用来当异步操作完成时调用回调函数
+		//线程的入口点函数非常简单,它包含一个try-catch块和一个对asio::io_service对象的run()方法
+		//的调用
+		std::thread worker_thread([&ios]() {
+			try {
+				ios.run();
+			}
+			catch (system::system_error &e) {
+				std::cout << "Error, code = " << e.code()
+					<< ". Message = " << e.what();
+			}
+		});
+
+		//模拟延迟
+		//主线程将进入休眠状态2s
+		//这是为了允许连接操作稍微前进并模拟用户在实际应用程序中发出的两个命令之间的延迟
+		//由于过快,因此不再使用模拟延迟
+		//std::this_thread::sleep_for(std::chrono::seconds(1));
+
+		//Cancelling the initiated operation
+		//最后调用套接字对象的cancel()方法来取消启动的连接操作
+		//此时,如果操作尚未完成,它将被取消,并且将使用一个参数调用相应回调
+		//该参数指定包含asio::error::operation_aborted值的错误代码,
+		//以通知操作已被取消,但是如果操作已经完成,则调用cancel()方法无效
+		//经测试,即使在新的操作系统上,也仍需要定义#define BOOST_ASIO_ENABLE_CANCELIO
+		//如果已经连接成功,则操作无效
+		sock->cancel();
+
+		//等待线程完成
+		worker_thread.join();
+
+	}
+	catch (boost::system::system_error &e) {
+		return e.code().value();
+	}
+	return 0;
+}
+//
+//在上一个示例中,我们考虑了取消与活动TCP套接字关联的异步连接操作
+//但是,可以以类似的方式取消与TCP和UDP套接字相关的任何操作
+//在启动操作后,就在相应的套接字对象上调用cancel()方法
+//除此之外,可以通过调用解析器对象的取消来取消用于异步解析DNS名称的asio::ip::tcp::resolver或
+//asio::ip::udp::resolver类的async_resolve()方法
+//由Boost提供的相应自由函数启动的所有异步操作,通过对作为第一个参数传递给free函数
+//的对象调用cancel()方法,也可以取消Asio,此对象可以表示套接字(主动或被动)或解析程序
+
+//在通过TCP协议进行通信的一些分布式应用程序中,需要传输没有固定大小和
+//特定字节序列的消息,标记其边界,这意味着接收方在从套接字读取消息时,无法通过分析消息本身的大小或内容
+//来确定消息的结束位置,解决此问题的一种方法是以这样的方式构造每个消息,即它由逻辑头部分和逻辑主体部分组成
+//标题部分具有固定的大小,这允许接收方首先读取并解析标头,找出消息体的大小,然后正确
+//记取消息的其余部分
+
+//这种方法非常简单并且被广泛使用,但是,它带来一些冗余和额外的计算开销
+//这在某些情况下可能是不可接受的.当应用程序为发送给其对等方的每条消息使用单独
+//的套接字时,可以应用另一种方法,这是一种非常流行的做法(shut down)
+//这种方法的想法是在将消息写入套接字后由消息发送方关闭(shut down)套接字的发送部分
+//这会导致向接收方发送特殊服务消息,通知接收方消息已结束,发送方不会使用当前连接发送任何其他消息
+//第二种方法提供了比第一种方法更多的好处,并且因为它是TCP协议软件的一部分,所以开发人员可以随时使用它
+//套接字上的另一个操作,即可能看起来类似于关闭(closing),但它实际上与它非常不同
+//关闭(closing)套接字假定将套接字和与之关联的所有其他资源返回给操作系统,就像内存,进程或线程,文件句柄或互斥锁一样,
+//套接字是操作系统的资源,与任何其他资源一样,套接字应在分配,使用后,再返回操作系统,并且应用程序不再
+//需要该套接字,否则可能发生资源泄漏,这可能最终资源耗尽以及应用程序的错误或整个操作系统的不稳定
+//当套接字未关闭时可能发生的严重问题使得关闭非常重要,关闭(shut down)和关闭(closing)TCP套接字的主要区别在于,建立连接
+//关闭(closing)会中断连接,并最终释放并将其返回给操作系统,而关闭(shut down)仅禁用写入,读取两个操作或
+//在套接字上的所有操作并向对等应用程序发送服务消息,通知此事实,关闭(shut down)套接字永远不会导致套接字解除分配
+// shut down and close a TCP socket
+
+//客户端应用程序
+//其目的是分配套接字并将其连接到服务器应用程序,建立连接后,应用程序应准备并发送
+//请求消息,通过在向其写入消息后关闭套接字来通知其边界,发送请求后,客户端应用程序应读取响应
+//未知的消息边界,因此,应该执行读取,直到服务器关闭(shut down)其套接字以通知响应边界
+
+//定义一个函数,该函数接受对连接到服务器的套接字对象的引用,并使用此套接字与服务器进行通信
+void communicate(asio::ip::tcp::socket &sock) {
+	const char request_buf[] = { 0x48,0x65,0x0,0x6c,0x6c,0x6f };
+
+	asio::write(sock, asio::buffer(request_buf));
+
+	sock.shutdown(asio::socket_base::shutdown_send);
+
+	asio::streambuf response_buf;
+
+	system::error_code ec;
+	asio::read(sock, response_buf, ec);
+
+	if (ec == asio::error::eof) {
+		//整个消息已经收到
+		std::istream input(&response_buf);
+		std::string x;
+		std::getline(input, x);
+		std::cout << "+++Received+++\n"
+			<< x << std::endl;
+	}
+	else {
+		throw system::system_error(ec);
+	}
+}
+
+int Test_communicate() {
+	std::string raw_ip_address = "127.0.0.1";
+	unsigned short port_num = 3333;
+	try {
+		asio::ip::tcp::endpoint ep(
+			asio::ip::address::from_string(raw_ip_address),
+			port_num
+		);
+		asio::io_service ios;
+
+		asio::ip::tcp::socket sock(ios, ep.protocol());
+
+		sock.connect(ep);
+
+		communicate(sock);
+	}
+	catch (boost::system::system_error& ec) {
+		std::cout << "Error, code = " << ec.code()
+			<< ". Message = " << ec.what();
+		return ec.code().value();
+	}
+	return 0;
+}
+
+//服务端
+//旨在分配接受器套接字并被支地等待连接请求,当连接请求到达时,它应该接受它并从
+//连接到客户端的套接字读取数据,直到客户端应用程序关闭其侧面的套接字,收到请求消息后
+//服务器应用程序应通过关闭套接字发送响应消息通知其边界,我们通过指定include和using指令来
+//开始客户端应用程序
+
+//定义一个函数,该函数接受对连接到客户端应用程序的套接字对象的引用,并使用此套接字与客户端进行通信 
+void processRequest(asio::ip::tcp::socket &sock) {
+	asio::streambuf request_buf;
+
+	system::error_code ec;
+
+	asio::read(sock, request_buf, ec);
+
+	std::istream input(&request_buf);
+
+	std::string x;
+	std::getline(input, x);
+	std::cout << x <<std::endl;
+
+	if (ec != asio::error::eof)
+		throw system::system_error(ec);
+
+	const char response_buf[] = { 0x48,0x69,0x21 };
+
+	asio::write(sock, asio::buffer(response_buf));
+
+	sock.shutdown(asio::socket_base::shutdown_send);
+}
+
+int Test_processRequest() {
+	unsigned short port_num = 3333;
+	try {
+		asio::ip::tcp::endpoint ep(asio::ip::address_v4::any(),
+			port_num);
+
+		asio::io_service ios;
+		asio::ip::tcp::acceptor acceptor(ios, ep.protocol());
+		//之前报错listen没有正确的参数,这里是忘记bind了
+		acceptor.bind(ep);
+		acceptor.listen();
+		asio::ip::tcp::socket sock(ios);
+
+		acceptor.accept(sock);
+
+		processRequest(sock);
+	}
+	catch (system::system_error &e) {
+		std::cout << "Error, code = " << e.code()
+			<< ". Message = " << e.what();
+		return e.code().value();
+	}
+
+	return 0;
+}
+int Test_Shutdown_TCP() {
+	std::cout << "Select Your Func:"
+		<< "\nTest_First_Client_TCP = 0"
+		<< "\nTest_First_Server_TCP = 1"
+		<< std::endl;
+	unsigned IServer;
+	std::cin >> IServer;
+	if (IServer != 0) {
+		Test_processRequest();
+	}
+	else {
+		Test_communicate();
+	}
+	return 0;
+}
+//p106
 int main() {
 
 	//====CH.1====
@@ -1642,6 +1887,8 @@ int main() {
 	//Create_Mutable_Buffer();
 	//Test_Buffer_IO();
 	//Test_First_TCP();
-	Test_First_TCP_ASYN();
+	//Test_First_TCP_ASYN();
+	//ASYNC_CANCEL();
+	Test_Shutdown_TCP();
 	std::system("pause");
 }
