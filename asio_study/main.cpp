@@ -2,6 +2,8 @@
 #define BOOST_ASIO_ENABLE_CANCELIO
 #include<boost/asio.hpp>
 #include<thread>
+#include<mutex>
+#include<memory>
 using namespace boost;
 //basic
 //在创建端点（endpoint）之前，客户端应用程序必须获取原始IP地址和指定将与之通信的服务器的协议端口号
@@ -1249,7 +1251,7 @@ WriteHandler handler);*/
 //Step 1
 //定义一个数据结构,其中包含一个指向套接字对象的指针,一个
 //包含要写入的数据的缓冲区,以及一个包含已写入的字节数的计数器变量
-struct Session {
+struct Session0 {
 	std::shared_ptr<asio::ip::tcp::socket> sock;
 	std::string buf;
 	std::size_t total_bytes_written;
@@ -1258,7 +1260,7 @@ struct Session {
 //定义一个回调函数,它将在异步操作完成时调用
 void callback(const boost::system::error_code &ec,
 	std::size_t bytes_transferred,
-	std::shared_ptr<Session> s)
+	std::shared_ptr<Session0> s)
 {
 	if (ec.value() != 0) {
 		std::cout << "Error, code = "
@@ -1285,7 +1287,7 @@ void callback(const boost::system::error_code &ec,
 void writeToSocket2(std::shared_ptr<asio::ip::tcp::socket> sock) {
 	
 	//首先在空闲内存中分配Session数据结构的实例
-	std::shared_ptr<Session> s(new Session);
+	std::shared_ptr<Session0> s(new Session0);
 
 	//Step 4
 	//填充这个实例,并将参数传递给这个对象的sock指针
@@ -1827,8 +1829,29 @@ void processRequest(asio::ip::tcp::socket &sock) {
 }
 
 int Test_processRequest() {
+	//首先启动服务器应用程序
 	unsigned short port_num = 3333;
 	try {
+		//分配,打开绑定到端口3333,并开始等待来自客户端的传入连接请求
+		//然后启动客户端应用程序,打开并连接到服务器,建立连接后,调用communic()函数
+		//客户端应用程序将请求写入套接字,然后调用套接字的shutdown()方法,并将asio::socket_base::shutdown_send常量作为参数传递
+		//此调用将关闭套接字的发送部分,此时,禁用写入套接字,
+		//并且无法恢复套接字状态以使其再次可写:
+		//sock.shutdown(asio::socket_base::shutdown_send);
+		//关闭客户端应用程序中的套接字在服务器应用程序中可以看作是到达服务器的
+		//协议服务消息,通知对等应用程序已关闭套接字的事实
+		//Boost.Asio通过asio::read()函数返回的错误代码将此消息传递给应用程序代码
+		//Boost.Asio库将此code定义为asio::error::eof
+		//服务器应用程序使用此错误代码来查明客户端何时完成发送请求消息
+		//当服务器收到完整请求消息时,服务器和客户端交换其角色
+		//当服务器完成将响应消息写入套接字时,它会关闭其套接字的发送部分
+		//以暗示整个消息已发送给其对等体,同时客户端应用程序在asio::read()函数
+		//中被阻塞,并读取服务器发送的响应,直到函数返回错误代码==asio::error::eof,
+		//这意味着服务器已完成发送响应消息,当asio::read()函数返回此错误代码时
+		//客户端知道它已读取整个响应消息,然后它可以开始处理它
+
+		//[注意]在客户端关闭其套接字的发送部分后,它仍然可以从套接字读取数据
+		//因为套接字的接收部分独立于发送部分保持打开状态
 		asio::ip::tcp::endpoint ep(asio::ip::address_v4::any(),
 			port_num);
 
@@ -1867,6 +1890,424 @@ int Test_Shutdown_TCP() {
 	return 0;
 }
 //p106
+//为了关闭已分配的套接字,应该在asio::ip::tcp::socket类的相应对象上调用close()方法
+//但是,通常不需要显式执行它,因为如果没有显式关闭套接字对象的析构函数,则套接字对象的析构函数会关闭套接字
+
+
+//==== Chapter 3 ====
+//一个典型的tcp同步客户端按照以下算法工作
+//1.获取IP地址和服务器应用程序的协议端口号
+//2.分配一个活动套接字
+//3.与服务器应用程序建立连接
+//4.与服务器交换信息
+//5.关闭连接
+//6.取消分配套接字
+
+//
+class SyncTCPClient {
+public:
+	SyncTCPClient(const std::string & raw_ip_address,
+		unsigned short port_num)
+		:m_ep(asio::ip::address::from_string(raw_ip_address),port_num),
+		m_sock(m_ios){
+		m_sock.open(m_ep.protocol());
+	}
+
+	void connect() {
+		m_sock.connect(m_ep);
+	}
+
+	void close() {
+		m_sock.shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+		m_sock.close();
+	}
+
+	std::string emulateLongComputationOp(
+		unsigned int durarion_sec
+	) {
+		std::string request = "EMULATE_LONG_COMP_OP "
+			+ std::to_string(durarion_sec)
+			+ "\n";
+
+		sendRequest(request);
+		return receiveResponse();
+	}
+
+
+private:
+	void sendRequest(const std::string &request) {
+		asio::write(m_sock, asio::buffer(request));
+
+	}
+
+	std::string receiveResponse() {
+		asio::streambuf buf;
+		//这里需要注意:
+		//read_until传递给buf的可能包含\n之后的字符,
+		//因此,使用\n作为标识便可以用getline直接忽略换行之后的无关字符
+		asio::read_until(m_sock, buf, '\n');
+
+		std::istream input(&buf);
+		std::string response;
+		std::getline(input, response);
+
+		return response;
+	}
+
+private:
+	asio::io_service m_ios;
+	asio::ip::tcp::endpoint m_ep;
+	asio::ip::tcp::socket m_sock;
+};
+int C3_SYN_TCP_CLIENT() {
+	const std::string raw_ip_address = "127.0.0.1";
+	const unsigned short port_num = 3333;
+
+	try {
+		SyncTCPClient client(raw_ip_address, port_num);
+
+		client.connect();
+
+		std::cout << "Sending request to the server..."
+			<< std::endl;
+
+		std::string response = client.emulateLongComputationOp(10);
+
+		std::cout << "Response received: " << response << std::endl;
+
+		client.close();
+	}
+	catch (boost::system::system_error &e) {
+		std::cout << "Error!, code = "
+			<< e.code() << " Message = " << e.what();
+		return e.code().value();
+	}
+	return 0;
+}
+//
+//典型的UDP同步客户端根据以下算法工作
+//1.获取IP地址和客户端应用程序要与之通信的每个服务器的协议端口号
+//2.分配UDP套接字
+//3.与服务器交换消息
+//4.取消分配套接字
+
+class SyncUDPClient {
+public:
+	SyncUDPClient() :
+		m_sock(m_ios) {
+
+		m_sock.open(asio::ip::udp::v4());
+	}
+	
+	std::string emulateLongComputeationOp(
+		unsigned int durarion_sec,
+		const std::string &raw_ip_address,
+		unsigned short port_num
+	) {
+		std::string request = "EMULATE_LONG_COMP_OP "
+			+ std::to_string(durarion_sec)
+			+ "\n";
+
+		asio::ip::udp::endpoint ep(
+			asio::ip::address::from_string(raw_ip_address),
+				port_num
+			);
+		sendRequest(ep, request);
+		return receiveResponse(ep);
+	
+	}
+private:
+	void sendRequest(const asio::ip::udp::endpoint &ep,
+		const std::string& request) {
+
+		m_sock.send_to(asio::buffer(request), ep);
+	}
+
+	std::string receiveResponse(asio::ip::udp::endpoint& ep) {
+		char response[6];
+		//注意
+		//receive_from是一个同步方法,阻止线程,直到数据报从指定的服务器到达
+		//如果数据报永远不会到达,该方法永远不会解除阻塞,整个应用程序将挂起
+		//如果从服务器到达的数据报大小大于提供的缓冲区的大小,则该方法将失败
+		std::size_t bytes_received =
+			m_sock.receive_from(asio::buffer(response), ep);
+
+		m_sock.shutdown(asio::ip::udp::socket::shutdown_both);
+		return std::string(response, bytes_received);
+	}
+	
+
+private:
+	asio::io_service m_ios;
+	asio::ip::udp::socket m_sock;
+};
+int C3_SYN_UDP_CLIENT() {
+	const std::string server1_raw_ip_address = "127.0.0.1";
+	const unsigned short server1_port_num = 3333;
+
+	const std::string server2_raw_ip_address = "192.168.1.10";
+	const unsigned short server2_port_num = 3334;
+
+	try {
+		SyncUDPClient client;
+
+		std::cout << "Sending request to the server #1 ..."
+			<< std::endl;
+		std::string response = client.emulateLongComputeationOp(10,
+			server1_raw_ip_address, server1_port_num);
+
+		std::cout << "Response from the server #1 received: "
+			<< response << std::endl;
+
+		std::cout << "Sending request to the server #2 ..." << std::endl;
+
+		response = client.emulateLongComputeationOp(10,
+			server2_raw_ip_address, server2_port_num);
+
+		std::cout << "Response from the server #2 received: " << response
+			<< std::endl;
+	}
+	catch (boost::system::system_error &e) {
+		std::cout << "Error!, code = "
+			<< e.code() << " Message = " << e.what();
+		return e.code().value();
+	}
+	return 0;
+}
+
+//异步TCP客户端
+//定义回调函数类型
+typedef void(*Callback)(unsigned int resquest_id,
+	const std::string &response,
+	const system::error_code &ec);
+//定义一个数据结构,目的是在执行时保持与请求相关的数据,命名为Session
+struct Session {
+	Session(asio::io_service& ios,
+		const std::string &raw_ip_address,
+		unsigned short port_num,
+		const std::string& request,
+		unsigned int id,
+		Callback callback) :
+
+		m_sock(ios),
+		m_ep(asio::ip::address::from_string(raw_ip_address), port_num),
+		m_request(request),
+		m_id(id),
+		m_callback(callback),
+		m_was_cancelled(false)
+	{
+
+	}
+
+	asio::ip::tcp::socket m_sock;
+	asio::ip::tcp::endpoint m_ep;
+	std::string m_request;
+
+	asio::streambuf m_response_buf;
+	std::string m_response;
+
+	system::error_code m_ec;
+
+	unsigned int m_id;
+
+	Callback m_callback;
+
+	bool m_was_cancelled;
+	std::mutex m_cancel_guard;
+};
+//接下来定义一个提供异步通信功能的类
+class AsyncTCPClient :public boost::noncopyable {
+public:
+	AsyncTCPClient() {
+		m_work.reset(new boost::asio::io_service::work(m_ios));
+
+		m_thread.reset(new std::thread([this]() {
+			m_ios.run();
+		}));
+	}
+
+	void emulateLongComputationOp(
+		unsigned int durarion_sec,
+		const std::string &raw_ip_address,
+		unsigned short port_num,
+		Callback callback,
+		unsigned int request_id
+	) {
+		std::string request = "EMULATE_LONG_CALC_OP " +
+			std::to_string(durarion_sec)
+			+ "\n";
+
+		std::shared_ptr<Session> session = std::shared_ptr<Session>(new Session(m_ios, raw_ip_address,
+			port_num, request, request_id, callback));
+
+		session->m_sock.open(session->m_ep.protocol());
+
+		std::unique_lock<std::mutex>
+			lock(m_active_sessions_guard);
+
+		m_active_sessions[request_id] = session;
+		lock.unlock();
+
+		session->m_sock.async_connect(session->m_ep,
+			[this, session](const system::error_code &ec)
+		{
+			if (ec.value() != 0) {
+				session->m_ec = ec;
+				onRequestComplete(session);
+				return;
+			}
+
+			std::unique_lock<std::mutex>cancel_lock(session->m_cancel_guard);
+
+			if (session->m_was_cancelled) {
+				onRequestComplete(session);
+				return;
+			}
+
+			asio::async_write(session->m_sock,
+				asio::buffer(session->m_request),
+				[this, session](const boost::system::error_code &ec,
+					std::size_t bytes_transferred) {
+				if (ec.value() != 0) {
+					session->m_ec = ec;
+					onRequestComplete(session);
+					return;
+				}
+			
+
+			std::unique_lock<std::mutex>
+				cancel_lock(session->m_cancel_guard);
+
+			if (session->m_was_cancelled) {
+				onRequestComplete(session);
+				return;
+			}
+
+
+			asio::async_read_until(session->m_sock,
+				session->m_response_buf,'\n',
+				[this, session](const boost::system::error_code& ec,
+					std::size_t bytes_transferred) {
+				if (ec.value() != 0) {
+					session->m_ec = ec;
+				}
+				else {
+					std::istream strm(&session->m_response_buf);
+					std::getline(strm, session->m_response);
+				}
+
+				onRequestComplete(session);
+			}); });
+
+
+		});
+
+
+	}
+
+	void cancelRequest(unsigned int request_id) {
+		std::unique_lock<std::mutex>
+			lock(m_active_sessions_guard);
+
+		auto it = m_active_sessions.find(request_id);
+		if (it != m_active_sessions.end()) {
+			std::unique_lock<std::mutex>
+				cancel_lock(it->second->m_cancel_guard);
+			it->second->m_was_cancelled = true;
+			it->second->m_sock.cancel();
+		}
+	}
+
+	void close(){
+		m_work.reset(NULL);
+
+		m_thread->join();
+	}
+private:
+	void onRequestComplete(std::shared_ptr<Session> session) {
+		boost::system::error_code ignord_ec;
+		session->m_sock.shutdown(
+			asio::ip::tcp::socket::shutdown_both,
+			ignord_ec
+		);
+
+		std::unique_lock<std::mutex>
+			lock(m_active_sessions_guard);
+
+		auto it = m_active_sessions.find(session->m_id);
+		if (it != m_active_sessions.end())
+			m_active_sessions.erase(it);
+
+		lock.unlock();
+
+		boost::system::error_code ec;
+
+		if (session->m_ec.value() == 0 && session->m_was_cancelled)
+			ec = asio::error::operation_aborted;
+		else
+			ec = session->m_ec;
+
+		session->m_callback(session->m_id,
+			session->m_response,ec);
+	}
+private:
+	asio::io_service m_ios;
+	std::map<int, std::shared_ptr<Session>> m_active_sessions;
+	std::mutex m_active_sessions_guard;
+	std::unique_ptr<boost::asio::io_service::work> m_work;
+	std::unique_ptr<std::thread> m_thread;
+};
+//现在,定义一个将作为回调函数,将其传递给AsyncTCPClient::enmulateLongComputationOp()方法
+void handler(unsigned int request_id,
+	const std::string &response,
+	const system::error_code& ec) {
+	if (ec.value() == 0) {
+		std::cout << "Request #" << request_id
+			<< " has completed. Response: "
+			<< response << std::endl;
+	}
+	else if (ec == asio::error::operation_aborted) {
+		std::cout << "Request #" << request_id
+			<< " has been cancelled by the user."
+			<< std::endl;
+	}
+	else {
+		std::cout << "Request #" << request_id
+			<< " failed! Error code = " << ec.value()
+			<< ". Error message = " << ec.message()
+			<< std::endl;
+	}
+	return;
+}
+int C3_ASYN_TCP_CLIENT() {
+	try {
+		AsyncTCPClient client;
+
+		client.emulateLongComputationOp(10, "127.0.0.1", 3333,
+			handler,1);
+
+		std::this_thread::sleep_for(std::chrono::seconds(5));
+
+		client.emulateLongComputationOp(11, "127.0.0.1", 3334, handler, 2);
+
+		client.cancelRequest(1);
+
+		std::this_thread::sleep_for(std::chrono::seconds(6));
+
+		client.emulateLongComputationOp(12, "127.0.0.1", 3335, handler, 3);
+
+		std::this_thread::sleep_for(std::chrono::seconds(15));
+
+		client.close();
+	}
+	catch (system::system_error &e) {
+		std::cout << "Error occured! Error code = " << e.code()
+			<< ". Message: " << e.what();
+		return e.code().value();
+	}
+	return 0;
+}
+//p129
 int main() {
 
 	//====CH.1====
@@ -1889,6 +2330,12 @@ int main() {
 	//Test_First_TCP();
 	//Test_First_TCP_ASYN();
 	//ASYNC_CANCEL();
-	Test_Shutdown_TCP();
+	//Test_Shutdown_TCP();
+	
+
+	//====CH.3====
+	//C3_SYN_TCP_CLIENT();
+	//C3_SYN_UDP_CLIENT();
+	C3_ASYN_TCP_CLIENT();
 	std::system("pause");
 }
