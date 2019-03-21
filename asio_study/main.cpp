@@ -1960,6 +1960,8 @@ private:
 	asio::ip::tcp::socket m_sock;
 };
 int C3_SYN_TCP_CLIENT() {
+	static int num = 1;
+	std::cout << "Num = " << num++ << std::endl;
 	const std::string raw_ip_address = "127.0.0.1";
 	const unsigned short port_num = 3333;
 
@@ -1968,7 +1970,7 @@ int C3_SYN_TCP_CLIENT() {
 
 		client.connect();
 
-		std::cout << "Sending request to the server..."
+		std::cout <<" > Sending request to the server..."
 			<< std::endl;
 
 		std::string response = client.emulateLongComputationOp(10);
@@ -2409,6 +2411,360 @@ int C3_ASYN_TCP_CLIENT() {
 ////7.关闭与客户端的连接并取消分配套接字
 
 //p147
+
+class Service {
+public:
+	Service() {}
+
+	//Boost.Asio I/O函数和方法可能抛出异常在HandleClient()
+	//方法中被捕获和处理,并且不会传播到方法调用者
+	//因此如果一个客户端的处理失败,服务器将继续工作
+	void HandleClient(asio::ip::tcp::socket &sock) {
+		try
+		{
+			asio::streambuf request;
+
+			asio::read_until(sock, request, '\n');
+
+			std::istream input(&request);
+			std::string x;
+			getline(input, x);
+			std::cout << x << std::endl;
+
+			int i = 0;
+			while (i != 100000)
+				i++;
+			;
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+			//
+			std::string response = "Response\n";
+			asio::write(sock, asio::buffer(response));
+
+		}
+		catch (boost::system::system_error &e)
+		{
+			std::cout << "Error occured! "
+				<< "Code = " << e.code()
+				<< " Message = " << e.what();
+			
+		}
+
+	}
+};
+
+//接下来定义另一个表示高级接受器概念的类
+
+class Acceptor {
+public:
+	Acceptor(asio::io_service &ios, unsigned short port_num) :
+		m_ios(ios), m_acceptor(m_ios, asio::ip::tcp::endpoint(asio::ip::address_v4::any(), port_num))
+	{
+		//开始侦听来自客户端的连接请求
+		m_acceptor.listen();
+	}
+
+	void Accept() {
+		asio::ip::tcp::socket sock(m_ios);
+
+		//如果有可用的挂起连接请求,则处理连接请求
+		//并将活动套接字sock连接到新客户端
+		//否则此方法将阻塞,直到新的连接请求到达
+		m_acceptor.accept(sock);
+
+		Service svc;
+		svc.HandleClient(sock);
+	}
+private:
+	asio::io_service &m_ios;
+	asio::ip::tcp::acceptor m_acceptor;
+};
+
+//定义服务器自身
+class Server
+{
+public:
+Server() :m_stop(false) {}
+
+//非阻塞的
+void Start(unsigned short port_num) {
+	m_thread.reset(new std::thread([this, port_num]() {
+		Run(port_num);
+	}));
+}
+
+//阻止调用程序线程直到服务器停止
+//缺点:可能Stop方法永远不会返回
+//更重要的是:服务器根本不会停止
+//Stop方法将永远阻止其调用者
+//如果调用Stop方法并且在检查Run()方法中的循环终止之前
+//将原子变量m_stop的值设置为true,则服务器几乎立即停止并且不会出现问题
+//但是,如果调用Stop()方法同时在acc.Accept()方法中阻塞
+//等待来自客户端的下一个连接请求,或在Service类中等待的一个同步i/o操作中
+//连接的客户端的请求消息,或客户端接收响应消息,在完成这些阻塞操作之前
+//服务器无法停止.因此例如,如果此时调用Stop()方法时,没有挂起的连接请求
+//则在新客户端连接并处理之前服务器不会停止,直到一个client连接并被处理
+//导致服务器永远被阻止
+//
+void Stop() {
+	m_stop.store(true);
+	m_thread->join();
+}
+private:
+	std::unique_ptr<std::thread>m_thread;
+	std::atomic<bool> m_stop;
+	asio::io_service m_ios;
+
+	void Run(unsigned short port_num) {
+		Acceptor acc(m_ios, port_num);
+
+		while (!m_stop.load()) {
+			acc.Accept();
+		}
+	}
+};
+int C4_SYN_TCP_Server() {
+	unsigned short port_num = 3333;
+	try {
+		Server srv;
+		srv.Start(port_num);
+
+		std::this_thread::sleep_for(std::chrono::seconds(60));
+
+		srv.Stop();
+	}
+	catch (boost::system::system_error &e)
+	{
+		std::cout << "Error occured! "
+			<< "Code = " << e.code()
+			<< " Message = " << e.what();
+		return e.code().value();
+	}
+	return 0;
+}
+//以上有两个问题
+//1.如果在服务器线程被阻塞等待传入连接请求时调用了Stop()方法,则可能无法停止
+//2.服务器很容易被单个恶意客户端挂起,使其对其他客户端不可用(只连接不进行消息发送)
+//合理且简单的解决方案是为阻塞操作超时,这次保证服务器定期取消阻塞以检查是否已发出停止
+//命令,并且还强制丢弃不发送请求的客户端
+//但是,BoostAsio没有提供取消同步操作或为其分配超时的方法,因此,应该尝试寻找其他方法来
+//使同步服务器更具响应性和稳定性
+
+//当没有挂起的连接请求时,使接受器套接字的accept同步方法解除阻塞的唯一合法方法是
+//向接受器正在侦听的端口发送虚假连接请求,我们可以执行以下技巧来解决
+//在Server类的Stop方法中,在将m_stop原子变量的值设置为true之后,可以创建
+//一个虚拟活动套接字,使其连接到同一个服务器,并发送一些虚拟请求
+//这将保证服务器线程将离开acceptor套接字的accept()方法,并最终检查m_stop原子变量的值
+//以找出其值等于true,这将循环终止并完成
+
+//Acceptor::Accept()方法,在所描述的方法中,假设服务器通过向其自身发送消息来停止自身(实际上消息从I/O
+//线程发送到工作线程)
+//另一种方法是拥有一个特殊的客户端(单独的应用程序),它将连接并向服务器发送特殊服务消息(例如:stop\n)
+//服务器将其解释为要停止的信号,在这种情况下,服务器将在外部(来自不同的应用程序)
+//进行控制,而Server类不需要具有Stop()方法
+
+
+//实现一个同步并行的TCP服务器
+//典型的同步并行TCP服务器根据以下算法工作
+//1.分配接受器套接字并将其绑定到特定的TCP端口
+//2.运行循环直到服务器停止
+////3.等待来自客户端的传入连接请求
+////4.接受客户端的连接请求
+////5.在这个线程的上下文中产生一个控制线程
+//////6.等待来自客户端的请求消息
+//////7.阅读请求消息
+//////8.处理请求
+//////9.向客户端发送响应消息
+//////10关闭与客户端的连接并释放套接字
+
+
+class Service2 {
+public:
+	Service2() {};
+
+	void StartHandligClient(std::shared_ptr<asio::ip::tcp::socket>sock)
+	{
+		std::thread th(([this, sock]() {
+			HandleClient(sock);
+		}));
+
+		th.detach();
+
+	}
+private:
+	void HandleClient(std::shared_ptr<asio::ip::tcp::socket>sock) {
+		try {
+			asio::streambuf request;
+			asio::read_until(*sock.get(), request, '\n');
+
+			std::istream input(&request);
+			std::string x;
+			getline(input, x);
+			std::cout << x << std::endl;
+
+			int i = 0;
+			while (i != 100000)
+				i++;
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+			std::string response = "Response\n";
+			asio::write(*sock.get(), asio::buffer(response));
+
+		}
+		catch (boost::system::system_error &e) {
+
+		}
+
+		//清除自身
+		delete this;
+	}
+};
+
+//接下来,定义另一个表示高级接受器概念的类
+//此类负责接受来自客户端的连接请求并实例化Service类的对象,这将为连接的客户端
+//提供服务
+class Acceptor2 {
+public:
+	Acceptor2(asio::io_service &ios,
+		unsigned short port_num)
+		:m_ios(ios), m_acceptor
+		(m_ios,asio::ip::tcp::endpoint(asio::ip::address_v4::any(), port_num)) {
+		m_acceptor.listen();
+	}
+
+
+	//本身此方法在没有accept时仍是阻塞的,只不过一旦有多个请求accept
+	//一次执行Accept并不会阻塞,因为使用了分离线程去处理
+	//
+	//不像第一个同步单线程处理那样,这个Accept不会因为调用处理函数而被阻塞
+	//因此并不是直接调用HandleClient的,而交给一个代理开启一个新的线程去
+	//调用并且最后分离了线程(函数中最后执行了delete释放自身)
+	//与Accept中的new 对应
+	void Accept() {
+		//因为底层是开启了新的线程并且是分离的,因此使用了智能指针存sock
+		std::shared_ptr<asio::ip::tcp::socket>sock(new asio::ip::tcp::socket(m_ios));
+
+		m_acceptor.accept(*sock);
+
+		(new Service2)->StartHandligClient(sock);
+	}
+
+private:
+	asio::io_service &m_ios;
+	asio::ip::tcp::acceptor m_acceptor;
+};
+//接下来是Server2
+
+class Server2 {
+public:
+	Server2() :m_stop(false) {}
+
+	void Start(unsigned short port_num) {
+		m_thread.reset(new std::thread([this, port_num]() {
+			Run(port_num);
+		}));
+
+	}
+	/*包括服务器可能不会立即停止。
+	更重要的是，服务器根本不会停止，Stop（）方法将永远阻止其调用者*/
+	//解决方案同第一个同步服务器
+	void Stop() {
+		m_stop.store(true);
+		m_thread->join();
+	}
+private:
+	void Run(unsigned short port_num) {
+		Acceptor2 acc(m_ios, port_num);
+
+		while (!m_stop.load()) {
+			acc.Accept();
+		}
+	}
+
+	std::unique_ptr<std::thread>m_thread;
+	std::atomic<bool>m_stop;
+	asio::io_service m_ios;
+};
+//
+int C4_SYN_TCP_MServer() {
+	unsigned short port_num = 3333;
+
+	try {
+		Server2 srv;
+		srv.Start(port_num);
+
+		std::this_thread::sleep_for(std::chrono::seconds(60));
+
+		srv.Stop();
+	}
+	catch (boost::system::system_error &e) {
+		return e.code().value();
+	}
+	return 0;
+}
+int Test_C3_C4_1() {
+	std::cout << "Select Your Func:"
+		<< "\nTest_First_Client_TCP = 0"
+		<< "\nTest_First_Server_TCP = 1"
+		<< std::endl;
+	unsigned IServer;
+	std::cin >> IServer;
+	if (IServer != 0) {
+		
+		C4_SYN_TCP_Server();
+	}
+	else {
+		std::thread x1(C3_SYN_TCP_CLIENT);
+		std::thread x2(C3_SYN_TCP_CLIENT);
+		std::thread x3(C3_SYN_TCP_CLIENT);
+		x1.join();
+		x2.join();
+		x3.join();
+		//C3_SYN_TCP_CLIENT();
+		//C3_SYN_TCP_CLIENT();
+		//C3_SYN_TCP_CLIENT();
+	}
+	return 0;
+}
+int Test_C3_C4_2() {
+	std::cout << "Select Your Func:"
+		<< "\nTest_First_Client_TCP = 0"
+		<< "\nTest_First_Server_TCP = 1"
+		<< std::endl;
+	unsigned IServer;
+	std::cin >> IServer;
+	if (IServer != 0) {
+
+		C4_SYN_TCP_MServer();
+	}
+	else {
+		std::thread x1(C3_SYN_TCP_CLIENT);
+		std::thread x2(C3_SYN_TCP_CLIENT);
+		std::thread x3(C3_SYN_TCP_CLIENT);
+		x1.join();
+		x2.join();
+		x3.join();
+		//C3_SYN_TCP_CLIENT();
+		//C3_SYN_TCP_CLIENT();
+		//C3_SYN_TCP_CLIENT();
+	}
+	return 0;
+}
+//实现一个异步的TCP服务器
+
+//典型的异步TCP服务器根据以下算法工作
+//1.分配接受器套接字并将其绑定到特定的TCP端口
+//2.启动异步接受操作
+//3.生成一个或多个控制线程,并将它们添加到运行Boost.Asio事件循环的线程池中
+//4.异步接受操作完成后,启动一个新的操作以接受下一个连接请求
+//5.启动异步读取操作以从连接的客户端读取请求
+//6.启动异步读取操作完成后,处理请求并准备响应消息
+//7.启动异步写入操作以响应消息发送到客户端
+//8.异步写入操作完成后,关闭连接并取消分配套接字
+//注意:取决于具体应用中的具体异步操作的相对定时,可以以做生意顺序执行从前
+//术算法中的第四步开始的步骤
+//p163
 int main() {
 
 	//====CH.1====
@@ -2441,6 +2797,9 @@ int main() {
 
 
 	//====CH.4====
-
+	//C4_SYN_TCP_Server();
+	//Test_C3_C4_1();
+	//C4_SYN_TCP_MServer();
+	Test_C3_C4_2();
 	std::system("pause");
 }
