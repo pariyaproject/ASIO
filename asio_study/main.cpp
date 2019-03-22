@@ -2290,6 +2290,8 @@ void handler(unsigned int request_id,
 	return;
 }
 int C3_ASYN_TCP_CLIENT() {
+	static int num = 1;
+	std::cout << "Num = " << num++ << std::endl;
 	try {
 		AsyncTCPClient client;
 
@@ -2765,6 +2767,291 @@ int Test_C3_C4_2() {
 //注意:取决于具体应用中的具体异步操作的相对定时,可以以做生意顺序执行从前
 //术算法中的第四步开始的步骤
 //p163
+
+
+class Service3 {
+public:
+	Service3(std::shared_ptr<asio::ip::tcp::socket> sock)
+		:m_sock(sock) {}
+
+	void StartHandling() {
+		asio::async_read_until(*m_sock,m_request,
+			'\n',
+			[this](const boost::system::error_code &e,
+			std::size_t bytes_transferred){
+			onRequestReceived(e, bytes_transferred);
+
+
+		});
+
+	}
+private:
+	void onRequestReceived(const boost::system::error_code &ec, std::size_t bytes_transferred) {
+		if (ec.value() != 0) {
+			std::cout << "Error occured! Error code = "
+				<< ec.value()
+				<< ". Message: " << ec.message();
+			onFinish();
+			return;
+		}
+
+		m_response = ProcessRequest(m_request);
+
+		asio::async_write(*m_sock,
+			asio::buffer(m_response),
+			[this](
+				const boost::system::error_code &ec,
+				std::size_t bytes_transferred) {
+			onResponseSent(ec,
+				bytes_transferred);
+
+		
+		});
+	}
+
+	void onResponseSent(const boost::system::error_code&ec,
+		std::size_t bytes_transferred) {
+		if (ec.value() != 0) {
+			std::cout << "Error occured! Error code = "
+				<< ec.value()
+				<< ". Message: " << ec.message();
+			
+			
+		}
+		onFinish();
+	}
+
+	void onFinish() {
+		delete this;
+	}
+
+	std::string ProcessRequest(asio::streambuf &request) {
+		int i = 0;
+		while (i != 200000)
+			i++;
+
+		std::string response = "Response\n";
+		return response;
+	}
+private:
+	std::shared_ptr<asio::ip::tcp::socket> m_sock;
+	std::string m_response;
+	asio::streambuf m_request;
+};
+
+class Acceptor3 {
+public:
+	Acceptor3(asio::io_service& ios,unsigned short port_num)
+		:m_ios(ios),
+		m_acceptor(m_ios, asio::ip::tcp::endpoint(asio::ip::address_v4::any(), port_num))
+	{
+
+	}
+
+	void Start() {
+		m_acceptor.listen();
+		InitAccept();
+	}
+
+	void Stop() {
+		m_isStopped.store(true);
+	}
+private:
+	void InitAccept() {
+		std::shared_ptr<asio::ip::tcp::socket>
+			sock(new asio::ip::tcp::socket(m_ios));
+
+		m_acceptor.async_accept(*sock,
+			[this, sock](const boost::system::error_code& error) {
+
+			onAccept(error, sock);
+		});
+
+	}
+
+	void onAccept(const boost::system::error_code&ec,
+		std::shared_ptr<asio::ip::tcp::socket>sock) {
+		if (ec.value()==0) {
+			(new Service3(sock))->StartHandling();
+		}
+
+		else {
+			std::cout << "Error code = "
+				<< ec.value() << " Message = "
+				<< ec.message();
+		}
+
+		if (!m_isStopped.load()) {
+			InitAccept();
+		}
+		else {
+			m_acceptor.close();
+		}
+	}
+private:
+	asio::io_service &m_ios;
+	asio::ip::tcp::acceptor m_acceptor;
+	std::atomic<bool> m_isStopped;
+};
+
+class Server3 {
+public:
+	Server3() {
+		m_work.reset(new asio::io_service::work(m_ios));
+	}
+
+	void Start(unsigned short port_num,
+		unsigned int thread_pool_size) {
+		assert(thread_pool_size > 0);
+
+		acc.reset(new Acceptor3(m_ios, port_num));
+		acc->Start();
+
+		for (unsigned int i = 0; i < thread_pool_size; i++) {
+			std::unique_ptr<std::thread> th(
+				new std::thread([this]() {
+				m_ios.run();
+			})
+			);
+			m_thread_pool.push_back(std::move(th));
+		}
+	}
+
+	void Stop() {
+		acc->Stop();
+		m_ios.stop();
+
+		for (auto&th : m_thread_pool) {
+			th->join();
+		}
+	}
+private:
+	asio::io_service m_ios;
+	std::unique_ptr<asio::io_service::work>m_work;
+	std::unique_ptr<Acceptor3>acc;
+	std::vector<std::unique_ptr<std::thread>>m_thread_pool;
+};
+int C4_ASYN_TCP_MServer() {
+	const unsigned int DEFAULT_THREAD_POOL_SIZE = 2;
+
+	unsigned short port_num = 3333;
+
+	try {
+		Server3 srv;
+
+		//通常在并行应用程序中用于查找最佳线程数数的通用公式是计算机乘以2的处理器数
+		//使用std::thread::hardware_concurrency静态方法来获取处理器的数量
+		//但是,此方法可能返回0
+		unsigned int thread_pool_size =
+			std::thread::hardware_concurrency() * 2;
+
+		if (thread_pool_size == 0)
+			thread_pool_size = DEFAULT_THREAD_POOL_SIZE;
+
+		srv.Start(port_num, thread_pool_size);
+
+		std::this_thread::sleep_for(std::chrono::seconds(60));
+
+		srv.Stop();
+	}
+	catch (system::system_error&e) {
+		std::cout << "Error code = "
+			<< e.code() << ", Message = "
+			<< e.what();
+
+		return e.code().value();
+	}
+
+	return 0;
+}
+int Test_C3_C4_3() {
+	std::cout << "Select Your Func:"
+		<< "\nTest_First_Client_TCP = 0"
+		<< "\nTest_First_Server_TCP = 1"
+		<< std::endl;
+	unsigned IServer;
+	std::cin >> IServer;
+	if (IServer != 0) {
+
+		C4_ASYN_TCP_MServer();
+	}
+	else {
+		std::thread x1(C3_ASYN_TCP_CLIENT);
+		std::thread x2(C3_ASYN_TCP_CLIENT);
+		std::thread x3(C3_ASYN_TCP_CLIENT);
+		x1.join();
+		x2.join();
+		x3.join();
+		//C3_SYN_TCP_CLIENT();
+		//C3_SYN_TCP_CLIENT();
+		//C3_SYN_TCP_CLIENT();
+	}
+	return 0;
+}
+
+
+//====CH.5====
+
+//HTTP协议是在TCP协议之上运行的应用层协议
+//允许客户端应用程序从服务器请求特定的资源,服务器将请求的资源传输回
+//客户端
+//称为GET的最简单方法假定以下事件流
+//1.HTTP客户端应用程序生成请求消息,该消息包含有关要请求的特定资源
+//的信息并将其发送到使用TCP作为传输协议的HTTP服务器应用程序
+//2.HTTP服务器应用程序在收到来自客户端的请求后对其进行解析,从存储中
+//提取所请求的资源,并将其作为一部分发送回客户端
+
+//Boost.Asio不包含SSL/TLS协议实现,相反,它依赖于OpenSSL库
+//
+//在实现HTTP客户端应用程序时,需要处理三类错误
+//1.由执行Boost.Asio函数和类的方法时可能出现的大量错误表示
+//例如:如果在表示尚未打开的套接字的对象上调用write_some()方法,则该方法将返回与操作系统相关的错误代码
+//(通过抛出异常或通过out参数的方式,具体取决于方法(已使用过载)),指定在未打开的套接字上执行
+//了无效操作的事实
+//2.HTTP协议定义的错误和非错误状态,例如服务器返回的状态代码200作为对客户端发出的特定请求的响应
+//指定客户端的请求已成功完成的事实,另一方面,状态代码500指定在执行所请求
+//的操作时,在服务器上发生导致请求未被满足的错误
+//3.与HTTP协议本身相关的错误,如果服务器发送消息,作为更正客户端请求的响应
+//并且此消息不是正确的结构化的HTTP响应,则客户端应用程序应具有根据错误
+//代码表示此事实的方法
+
+//第一类错误的错误代码在Boost.Asio库的源中定义
+//第二类的状态代码由HTTP协议定义
+//第三类没有在任何地方定义,应当在自己的程序中定义相应的错误代码
+
+//定义一个错误代码,它代表了一个非常一般的错误,指出从服务器收到的消息不是正确的HTTP
+//响应消息,因此客户端无法解析它,代码命名为invalid_response
+namespace http_errors {
+	enum http_error_codes
+	{
+		invalid_response = 1
+	};
+	//然后定义一个表示错误类别的类
+	//其中包括上面定义的invalid_response错误代码
+	//命名为http_errors_category
+	class http_errors_category
+		:public boost::system::error_category
+	{
+	public:
+		const char* name() const BOOST_SYSTEM_NOEXCEPT
+		{
+			return "http_errors";
+		}
+
+		std::string message(int e)const {
+			switch (e)
+			{
+			case invalid_response:
+				return "Server response cannot be parsed";
+				break;
+			default:
+				return "Unknown error";
+				break;
+			}
+		}
+	};
+	//p178
+}
 int main() {
 
 	//====CH.1====
@@ -2800,6 +3087,10 @@ int main() {
 	//C4_SYN_TCP_Server();
 	//Test_C3_C4_1();
 	//C4_SYN_TCP_MServer();
-	Test_C3_C4_2();
+	//Test_C3_C4_2();
+	//C4_ASYN_TCP_MServer();
+	//Test_C3_C4_3();
+
+	//====CH.5====
 	std::system("pause");
 }
