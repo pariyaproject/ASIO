@@ -4,6 +4,7 @@
 #include<thread>
 #include<mutex>
 #include<memory>
+#include <boost/filesystem.hpp>
 using namespace boost;
 //basic
 //在创建端点（endpoint）之前，客户端应用程序必须获取原始IP地址和指定将与之通信的服务器的协议端口号
@@ -1228,29 +1229,29 @@ WriteHandler handler);*/
 /*void write_handler(
  const boost::system::error_code& ec,
  std::size_t bytes_transferred);*/
-//这里,ec是一个参数,表示出现错误的code,而bytes_transferred参数表示在相应的异步操作
-//期间已向套接字写入了多少字节,正如函数的名字所示,它启动了一个旨在将d一些数据从缓冲区写入套接字
-//的操作,如果没有发生错误,此方法可确保在相应的异步操作期间至少写入一个字节
-//这意味着,在一般情况下,为了将缓冲区中可用的所有数据写入套接字,我们可能需要多次执行此异步
-//操作.
+ //这里,ec是一个参数,表示出现错误的code,而bytes_transferred参数表示在相应的异步操作
+ //期间已向套接字写入了多少字节,正如函数的名字所示,它启动了一个旨在将d一些数据从缓冲区写入套接字
+ //的操作,如果没有发生错误,此方法可确保在相应的异步操作期间至少写入一个字节
+ //这意味着,在一般情况下,为了将缓冲区中可用的所有数据写入套接字,我们可能需要多次执行此异步
+ //操作.
 
-//以下算法描述了执行和实现应用程序所需的步骤,该应用程序异步地将数据写入TCP套接字,
-//请注意,此算法提供了实现此类应用程序的可能方法
-//Boost.Asio非常灵活,允许我们通过以多种不同的方式异步地将数据写入套接字来组织和构建应用程序
-//1.定义一个数据结构,其中包含一个指向套接字对象的指针,一个缓冲区和一个用作写入字节计数器的变量
-//2.定义在异步写入操作完成时将调用的回调函数
-//3.在客户端应用程序中,分配并打开活动TCP套接字并将其连接到远程应用程序.在服务器应用程序中
-//通过接受连接请求获取连接的活动TCP套接字
-//4.分配一个缓冲区并用要写入套接字的数据填充它
-//5.通过调用套接字的async_write_some()方法启动异步写入操作
-//6.在asio::io_service类的对象上调用run()方法;
-//7.在回调中,增加写入的字节计数器,如果写入的字节数小于要写入的总字节数,
-//则启动新的异步写入操作以写入下一部分数据
-//p78
+ //以下算法描述了执行和实现应用程序所需的步骤,该应用程序异步地将数据写入TCP套接字,
+ //请注意,此算法提供了实现此类应用程序的可能方法
+ //Boost.Asio非常灵活,允许我们通过以多种不同的方式异步地将数据写入套接字来组织和构建应用程序
+ //1.定义一个数据结构,其中包含一个指向套接字对象的指针,一个缓冲区和一个用作写入字节计数器的变量
+ //2.定义在异步写入操作完成时将调用的回调函数
+ //3.在客户端应用程序中,分配并打开活动TCP套接字并将其连接到远程应用程序.在服务器应用程序中
+ //通过接受连接请求获取连接的活动TCP套接字
+ //4.分配一个缓冲区并用要写入套接字的数据填充它
+ //5.通过调用套接字的async_write_some()方法启动异步写入操作
+ //6.在asio::io_service类的对象上调用run()方法;
+ //7.在回调中,增加写入的字节计数器,如果写入的字节数小于要写入的总字节数,
+ //则启动新的异步写入操作以写入下一部分数据
+ //p78
 
-//Step 1
-//定义一个数据结构,其中包含一个指向套接字对象的指针,一个
-//包含要写入的数据的缓冲区,以及一个包含已写入的字节数的计数器变量
+ //Step 1
+ //定义一个数据结构,其中包含一个指向套接字对象的指针,一个
+ //包含要写入的数据的缓冲区,以及一个包含已写入的字节数的计数器变量
 struct Session0 {
 	std::shared_ptr<asio::ip::tcp::socket> sock;
 	std::string buf;
@@ -1285,7 +1286,7 @@ void callback(const boost::system::error_code &ec,
 }
 //先跳过步骤3,并在单独的函数中实现步骤4和5
 void writeToSocket2(std::shared_ptr<asio::ip::tcp::socket> sock) {
-	
+
 	//首先在空闲内存中分配Session数据结构的实例
 	std::shared_ptr<Session0> s(new Session0);
 
@@ -1328,7 +1329,7 @@ void writeToSocket2(std::shared_ptr<asio::ip::tcp::socket> sock) {
 	//启动异步写入操作和后续回调调用的循环重复,直到缓冲区中的所有数据都写入套接字或发生
 	//错误,当回调函数返回而不启动新的异步操作时,在main()函数中调用的asio::io_service::run()方法
 	//将解除执行线程的阻塞并返回,main函数也会返回,这是应用程序退出的时间
-	s->sock -> async_write_some(
+	s->sock->async_write_some(
 		asio::buffer(s->buf),
 		std::bind(callback,
 			std::placeholders::_1,
@@ -1337,7 +1338,7 @@ void writeToSocket2(std::shared_ptr<asio::ip::tcp::socket> sock) {
 
 }
 //现在回到Step 3
-int First_ASYN_TCP_Write(){
+int First_ASYN_TCP_Write() {
 	std::string raw_ip_address = "127.0.0.1";
 	unsigned short port_num = 3333;
 
@@ -1669,7 +1670,7 @@ int ASYNC_CANCEL() {
 					std::cout << "Error, code ="
 						<< ec.code() << ", Message ="
 						<< ec.what() << std::endl;
-					
+
 				}
 				return;
 			}
@@ -1816,7 +1817,7 @@ void processRequest(asio::ip::tcp::socket &sock) {
 
 	std::string x;
 	std::getline(input, x);
-	std::cout << x <<std::endl;
+	std::cout << x << std::endl;
 
 	if (ec != asio::error::eof)
 		throw system::system_error(ec);
@@ -1908,8 +1909,8 @@ class SyncTCPClient {
 public:
 	SyncTCPClient(const std::string & raw_ip_address,
 		unsigned short port_num)
-		:m_ep(asio::ip::address::from_string(raw_ip_address),port_num),
-		m_sock(m_ios){
+		:m_ep(asio::ip::address::from_string(raw_ip_address), port_num),
+		m_sock(m_ios) {
 		m_sock.open(m_ep.protocol());
 	}
 
@@ -1970,7 +1971,7 @@ int C3_SYN_TCP_CLIENT() {
 
 		client.connect();
 
-		std::cout <<" > Sending request to the server..."
+		std::cout << " > Sending request to the server..."
 			<< std::endl;
 
 		std::string response = client.emulateLongComputationOp(10);
@@ -2000,7 +2001,7 @@ public:
 
 		m_sock.open(asio::ip::udp::v4());
 	}
-	
+
 	std::string emulateLongComputeationOp(
 		unsigned int durarion_sec,
 		const std::string &raw_ip_address,
@@ -2012,11 +2013,11 @@ public:
 
 		asio::ip::udp::endpoint ep(
 			asio::ip::address::from_string(raw_ip_address),
-				port_num
-			);
+			port_num
+		);
 		sendRequest(ep, request);
 		return receiveResponse(ep);
-	
+
 	}
 private:
 	void sendRequest(const asio::ip::udp::endpoint &ep,
@@ -2037,7 +2038,7 @@ private:
 		m_sock.shutdown(asio::ip::udp::socket::shutdown_both);
 		return std::string(response, bytes_received);
 	}
-	
+
 
 private:
 	asio::io_service m_ios;
@@ -2182,31 +2183,31 @@ public:
 					onRequestComplete(session);
 					return;
 				}
-			
-
-			std::unique_lock<std::mutex>
-				cancel_lock(session->m_cancel_guard);
-
-			if (session->m_was_cancelled) {
-				onRequestComplete(session);
-				return;
-			}
 
 
-			asio::async_read_until(session->m_sock,
-				session->m_response_buf,'\n',
-				[this, session](const boost::system::error_code& ec,
-					std::size_t bytes_transferred) {
-				if (ec.value() != 0) {
-					session->m_ec = ec;
-				}
-				else {
-					std::istream strm(&session->m_response_buf);
-					std::getline(strm, session->m_response);
+				std::unique_lock<std::mutex>
+					cancel_lock(session->m_cancel_guard);
+
+				if (session->m_was_cancelled) {
+					onRequestComplete(session);
+					return;
 				}
 
-				onRequestComplete(session);
-			}); });
+
+				asio::async_read_until(session->m_sock,
+					session->m_response_buf, '\n',
+					[this, session](const boost::system::error_code& ec,
+						std::size_t bytes_transferred) {
+					if (ec.value() != 0) {
+						session->m_ec = ec;
+					}
+					else {
+						std::istream strm(&session->m_response_buf);
+						std::getline(strm, session->m_response);
+					}
+
+					onRequestComplete(session);
+				}); });
 
 
 		});
@@ -2227,7 +2228,7 @@ public:
 		}
 	}
 
-	void close(){
+	void close() {
 		m_work.reset(NULL);
 
 		m_thread->join();
@@ -2257,7 +2258,7 @@ private:
 			ec = session->m_ec;
 
 		session->m_callback(session->m_id,
-			session->m_response,ec);
+			session->m_response, ec);
 	}
 private:
 	asio::io_service m_ios;
@@ -2296,7 +2297,7 @@ int C3_ASYN_TCP_CLIENT() {
 		AsyncTCPClient client;
 
 		client.emulateLongComputationOp(10, "127.0.0.1", 3333,
-			handler,1);
+			handler, 1);
 
 		std::this_thread::sleep_for(std::chrono::seconds(5));
 
@@ -2449,7 +2450,7 @@ public:
 			std::cout << "Error occured! "
 				<< "Code = " << e.code()
 				<< " Message = " << e.what();
-			
+
 		}
 
 	}
@@ -2486,32 +2487,32 @@ private:
 class Server
 {
 public:
-Server() :m_stop(false) {}
+	Server() :m_stop(false) {}
 
-//非阻塞的
-void Start(unsigned short port_num) {
-	m_thread.reset(new std::thread([this, port_num]() {
-		Run(port_num);
-	}));
-}
+	//非阻塞的
+	void Start(unsigned short port_num) {
+		m_thread.reset(new std::thread([this, port_num]() {
+			Run(port_num);
+		}));
+	}
 
-//阻止调用程序线程直到服务器停止
-//缺点:可能Stop方法永远不会返回
-//更重要的是:服务器根本不会停止
-//Stop方法将永远阻止其调用者
-//如果调用Stop方法并且在检查Run()方法中的循环终止之前
-//将原子变量m_stop的值设置为true,则服务器几乎立即停止并且不会出现问题
-//但是,如果调用Stop()方法同时在acc.Accept()方法中阻塞
-//等待来自客户端的下一个连接请求,或在Service类中等待的一个同步i/o操作中
-//连接的客户端的请求消息,或客户端接收响应消息,在完成这些阻塞操作之前
-//服务器无法停止.因此例如,如果此时调用Stop()方法时,没有挂起的连接请求
-//则在新客户端连接并处理之前服务器不会停止,直到一个client连接并被处理
-//导致服务器永远被阻止
-//
-void Stop() {
-	m_stop.store(true);
-	m_thread->join();
-}
+	//阻止调用程序线程直到服务器停止
+	//缺点:可能Stop方法永远不会返回
+	//更重要的是:服务器根本不会停止
+	//Stop方法将永远阻止其调用者
+	//如果调用Stop方法并且在检查Run()方法中的循环终止之前
+	//将原子变量m_stop的值设置为true,则服务器几乎立即停止并且不会出现问题
+	//但是,如果调用Stop()方法同时在acc.Accept()方法中阻塞
+	//等待来自客户端的下一个连接请求,或在Service类中等待的一个同步i/o操作中
+	//连接的客户端的请求消息,或客户端接收响应消息,在完成这些阻塞操作之前
+	//服务器无法停止.因此例如,如果此时调用Stop()方法时,没有挂起的连接请求
+	//则在新客户端连接并处理之前服务器不会停止,直到一个client连接并被处理
+	//导致服务器永远被阻止
+	//
+	void Stop() {
+		m_stop.store(true);
+		m_thread->join();
+	}
 private:
 	std::unique_ptr<std::thread>m_thread;
 	std::atomic<bool> m_stop;
@@ -2631,7 +2632,7 @@ public:
 	Acceptor2(asio::io_service &ios,
 		unsigned short port_num)
 		:m_ios(ios), m_acceptor
-		(m_ios,asio::ip::tcp::endpoint(asio::ip::address_v4::any(), port_num)) {
+		(m_ios, asio::ip::tcp::endpoint(asio::ip::address_v4::any(), port_num)) {
 		m_acceptor.listen();
 	}
 
@@ -2713,7 +2714,7 @@ int Test_C3_C4_1() {
 	unsigned IServer;
 	std::cin >> IServer;
 	if (IServer != 0) {
-		
+
 		C4_SYN_TCP_Server();
 	}
 	else {
@@ -2775,10 +2776,10 @@ public:
 		:m_sock(sock) {}
 
 	void StartHandling() {
-		asio::async_read_until(*m_sock,m_request,
+		asio::async_read_until(*m_sock, m_request,
 			'\n',
 			[this](const boost::system::error_code &e,
-			std::size_t bytes_transferred){
+				std::size_t bytes_transferred) {
 			onRequestReceived(e, bytes_transferred);
 
 
@@ -2805,7 +2806,7 @@ private:
 			onResponseSent(ec,
 				bytes_transferred);
 
-		
+
 		});
 	}
 
@@ -2815,8 +2816,8 @@ private:
 			std::cout << "Error occured! Error code = "
 				<< ec.value()
 				<< ". Message: " << ec.message();
-			
-			
+
+
 		}
 		onFinish();
 	}
@@ -2841,7 +2842,7 @@ private:
 
 class Acceptor3 {
 public:
-	Acceptor3(asio::io_service& ios,unsigned short port_num)
+	Acceptor3(asio::io_service& ios, unsigned short port_num)
 		:m_ios(ios),
 		m_acceptor(m_ios, asio::ip::tcp::endpoint(asio::ip::address_v4::any(), port_num))
 	{
@@ -2871,7 +2872,7 @@ private:
 
 	void onAccept(const boost::system::error_code&ec,
 		std::shared_ptr<asio::ip::tcp::socket>sock) {
-		if (ec.value()==0) {
+		if (ec.value() == 0) {
 			(new Service3(sock))->StartHandling();
 		}
 
@@ -3032,6 +3033,7 @@ namespace http_errors {
 	class http_errors_category
 		:public boost::system::error_category
 	{
+		//两个纯虚函数
 	public:
 		const char* name() const BOOST_SYSTEM_NOEXCEPT
 		{
@@ -3057,7 +3059,8 @@ namespace http_errors {
 		static http_errors_category cat;
 		return cat;
 	}
-	
+
+	//定义一个函数重载
 	boost::system::error_code
 		make_error_code(http_error_codes e) {
 		return boost::system::error_code(
@@ -3069,8 +3072,12 @@ namespace http_errors {
 //在应用程序中使用新的错误代码之前,需要执行的最后一步是允许Boost库知道http_error_code
 //枚举的成员应该被视为错误代码,为此,我们在boost::system命名空间中包含以下结构定义
 
+//如果没有以下声明则会
+//无法将参数 1 从“http_errors::http_error_codes”转换为“const boost::system::error_code &”
 namespace boost {
 	namespace system {
+		//make_error_code是在这里设置可被自动调用
+		//就在Request::on_finish()中参数从一个enum隐式转换为一个boost::system::error_code
 		template<>
 		struct is_error_code_enum
 			<http_errors::http_error_codes>
@@ -3103,8 +3110,8 @@ typedef void(*Callback_Client)(const HTTPRequest& request,
 
 class HTTPResponse {
 	friend class HTTPRequest;
-	HTTPResponse():
-		m_response_stream(&m_response_buf){}
+	HTTPResponse() :
+		m_response_stream(&m_response_buf) {}
 public:
 	unsigned int get_status_code()const {
 		return m_status_code;
@@ -3154,7 +3161,7 @@ class HTTPRequest {
 
 	static const unsigned int DEFAULT_PORT = 80;
 
-	HTTPRequest(asio::io_service& ios, unsigned int id):
+	HTTPRequest(asio::io_service& ios, unsigned int id) :
 		m_port(DEFAULT_PORT),
 		m_id(id),
 		m_callback(nullptr),
@@ -3213,7 +3220,7 @@ public:
 				asio::ip::tcp::resolver::iterator iterator)
 		{
 			asio::ip::tcp::resolver::iterator end;
-			for (auto i = iterator; i != end;++i) {
+			for (auto i = iterator; i != end; ++i) {
 				DMESSAGE(i->endpoint().address());
 			}
 			on_host_name_resolved(ec, iterator);
@@ -3238,7 +3245,7 @@ private:
 		const boost::system::error_code& ec,
 		asio::ip::tcp::resolver::iterator iterator)
 	{
-		if (ec.value()!= 0) {
+		if (ec.value() != 0) {
 			on_finish(ec);
 			return;
 		}
@@ -3251,6 +3258,7 @@ private:
 			return;
 		}
 		// Connect to the host.
+		//连接到第一个有效的IP
 		asio::async_connect(m_sock,
 			iterator,
 			[this](const boost::system::error_code& ec,
@@ -3265,7 +3273,7 @@ private:
 		const boost::system::error_code& ec,
 		asio::ip::tcp::resolver::iterator iterator)
 	{
-		if (ec.value()!= 0) {
+		if (ec.value() != 0) {
 			on_finish(ec);
 			return;
 		}
@@ -3290,7 +3298,7 @@ private:
 				std::size_t bytes_transferred)
 		{
 			DMESSAGE("Established OK!");
-			DMESSAGE(">\n" + m_request_buf+"\n");
+			DMESSAGE(">\n" + m_request_buf + "\n");
 			on_request_sent(ec, bytes_transferred);
 		});
 	}
@@ -3315,12 +3323,15 @@ private:
 			return;
 		}
 		// Read the status line.
+		//注意这里已经读取了所有的头部
+		//有关报文的结构 https://www.cnblogs.com/rainydayfmb/p/5319318.html
 		asio::async_read_until(m_sock,
 			m_response.get_response_buf(),
 			"\r\n",
 			[this](const boost::system::error_code& ec,
 				std::size_t bytes_transferred)
 		{
+			//[注意]
 			//因此为了保证在释放套接字资源之前正确关闭发送
 			//在回调函数中shutdown()
 			m_sock.shutdown(asio::ip::tcp::socket::shutdown_send);
@@ -3339,9 +3350,14 @@ private:
 
 			//	DMESSAGE(c);
 			//}
-			
-			
+			std::istream xxx(&m_response.get_response_buf());
+			//DMESSAGE(xxx.rdbuf());
+			//DMESSAGE("DDDDDDDDDDDD");
+
+			//实测在这里就直接读完了所有的头部
+			//istream的rdbuf()方法也会推动流的前进
 			on_status_line_received(ec, bytes_transferred);
+			//on_headers_received(ec,bytes_transferred);
 		});
 	}
 
@@ -3350,7 +3366,7 @@ private:
 		std::size_t bytes_transferred)
 	{
 		DMESSAGE("Line");
-		if (ec .value()!= 0) {
+		if (ec.value() != 0) {
 			on_finish(ec);
 			return;
 		}
@@ -3404,7 +3420,7 @@ private:
 		// Now read the response headers.
 		asio::async_read_until(m_sock,
 			m_response.get_response_buf(),
-			"\r\n",
+			"\r\n\r\n",
 			[this, &status_code, &status_message](
 				const boost::system::error_code& ec,
 				std::size_t bytes_transferred)
@@ -3420,7 +3436,7 @@ private:
 	void on_headers_received(const boost::system::error_code& ec,
 		std::size_t bytes_transferred)
 	{
-		if (ec .value()!= 0) {
+		if (ec.value() != 0) {
 			on_finish(ec);
 			return;
 		}
@@ -3464,6 +3480,10 @@ private:
 				const boost::system::error_code& ec,
 				std::size_t bytes_transferred)
 		{
+			//最后，调用on_response_body_received（）方法，通知我们已收到整个响应消息。
+			//因为HTTP服务器可能在它发送响应消息的最后部分之后
+			//关闭其套接字的发送部分,所以在客户端,最后的读取操作可能完成
+			//错误代码等于asio::error::eof
 			on_response_body_received(ec,
 				bytes_transferred);
 		});
@@ -3482,7 +3502,7 @@ private:
 
 	void on_finish(const boost::system::error_code& ec)
 	{
-		if (ec .value()!= 0) {
+		if (ec.value() != 0) {
 			std::cout << "Error occured! Error code = "
 				<< ec.value()
 				<< ". Message: " << ec.message();
@@ -3512,6 +3532,10 @@ private:
 class HTTPClient {
 public:
 	HTTPClient() {
+		//首先定义一个work对象确保在没有挂起的异步操作时
+		//事件循环的线程不会退出此循环
+		//一般只要是封装了asio的异步功能的都需要
+		//一开始初始化时并没有挂起的异步操作
 		m_work.reset(new boost::asio::io_service::work(m_ios));
 		m_thread.reset(new std::thread([this]() {
 			m_ios.run();
@@ -3527,6 +3551,7 @@ public:
 		// Destroy the work object.
 		m_work.reset(NULL);
 		// Waiting for the I/O thread to exit.
+		//线程在所有挂起操作完成后立即退出事件循环
 		m_thread->join();
 	}
 private:
@@ -3564,9 +3589,11 @@ int C5_Client_ASYN() {
 		HTTPClient client;
 		std::shared_ptr<HTTPRequest> request_one =
 			client.create_request(1);
-		request_one->set_host("api.bgm.tv");
-		request_one->set_uri("/user/wz97315");
-		request_one->set_port(80);
+		//request_one->set_host("api.bgm.tv");
+		//request_one->set_uri("/user/wz97315");
+		request_one->set_host("127.0.0.1");
+		request_one->set_uri("/index.html");
+		request_one->set_port(3333);
 		request_one->set_callback(handler);
 		request_one->execute();
 		//std::shared_ptr<HTTPRequest> request_two =
@@ -3589,6 +3616,288 @@ int C5_Client_ASYN() {
 		return e.code().value();
 	}
 	return 0;
+}
+
+
+
+//接下来实现一个HTTP服务器
+namespace HTTP_SERVER {
+
+
+	class Service {
+		static const std::map<unsigned int, std::string>
+			http_status_table;
+
+	public:
+		Service(std::shared_ptr<boost::asio::ip::tcp::socket> sock) :
+			m_sock(sock),
+			m_request(4096),
+			m_response_status_code(200), // Assume success.
+			m_resource_size_bytes(0)
+		{};
+
+
+		void start_handling() {
+			DMESSAGE("start_handling");
+			asio::async_read_until(*m_sock.get(),
+				m_request,
+				"\r\n",
+				[this](
+					const boost::system::error_code& ec,
+					std::size_t bytes_transferred)
+			{
+				DMESSAGE("BEFORE: on_request_line_received");
+				on_request_line_received(ec,
+					bytes_transferred);
+			});
+		}
+
+	private:
+		void on_request_line_received(
+			const boost::system::error_code& ec,
+			std::size_t bytes_transferred)
+		{
+			if (ec.value() != 0) {
+				std::cout << "Error occured! Error code = "
+					<< ec.value()
+					<< ". Message: " << ec.message();
+				if (ec == asio::error::not_found) {
+					// No delimiter has been found in the
+					// request message.
+					m_response_status_code = 413;
+					send_response();
+					return;
+				}
+				else {
+					// In case of any other error –
+					// close the socket and clean up.
+					on_finish();
+					return;
+				}
+			}
+			// Parse the request line.
+			std::string request_line;
+			DMESSAGE("request_line = " + request_line);
+			std::istream request_stream(&m_request);
+			std::getline(request_stream, request_line, '\r');
+			// Remove symbol '\n' from the buffer.
+			request_stream.get();
+			// Parse the request line.
+			std::string request_method;
+			std::istringstream request_line_stream(request_line);
+			request_line_stream >> request_method;
+			// We only support GET method.
+			if (request_method.compare("GET") != 0) {
+				// Unsupported method.
+				m_response_status_code = 501;
+				send_response();
+				return;
+			}
+			request_line_stream >> m_requested_resource;
+			std::string request_http_version;
+			request_line_stream >> request_http_version;
+			if (request_http_version.compare("HTTP/1.1") != 0) {
+				// Unsupported HTTP version or bad request.
+				m_response_status_code = 505;
+				send_response();
+				return;
+			}
+			// At this point the request line is successfully
+			// received and parsed. Now read the request headers.
+			asio::async_read_until(*m_sock.get(),
+				m_request,
+				"\r\n\r\n",
+				[this](
+					const boost::system::error_code& ec,
+					std::size_t bytes_transferred)
+			{
+				on_headers_received(ec,
+					bytes_transferred);
+			});
+			return;
+		}
+		void on_headers_received(const boost::system::error_code& ec,
+			std::size_t bytes_transferred)
+		{
+			if (ec.value() != 0) {
+				std::cout << "Error occured! Error code = "
+					<< ec.value()
+					<< ". Message: " << ec.message();
+				if (ec == asio::error::not_found) {
+					// No delimiter has been fonud in the
+					// request message.
+					m_response_status_code = 413;
+					send_response();
+					return;
+				}
+				else {
+					// In case of any other error - close the
+					// socket and clean up.
+					on_finish();
+					return;
+				}
+			}
+			// Parse and store headers.
+			std::istream request_stream(&m_request);
+			std::string header_name, header_value;
+			while (!request_stream.eof()) {
+				std::getline(request_stream, header_name, ':');
+				if (!request_stream.eof()) {
+					std::getline(request_stream,
+						header_value,
+						'\r');
+					// Remove symbol \n from the stream.
+					request_stream.get();
+					m_request_headers[header_name] =
+						header_value;
+				}
+			}
+			// Now we have all we need to process the request.
+			process_request();
+			send_response();
+			return;
+		}
+
+		void process_request() {
+			// Read file.
+			std::string resource_file_path =
+				std::string("Z:\\github\\Bangumi_for_qq\\") +
+				m_requested_resource;
+			if (!boost::filesystem::exists(resource_file_path)) {
+				// Resource not found.
+				m_response_status_code = 404;
+				return;
+			}
+			std::ifstream resource_fstream(
+				resource_file_path,
+				std::ifstream::binary);
+			if (!resource_fstream.is_open()) {
+				// Could not open file.
+				// Something bad has happened.
+				m_response_status_code = 500;
+
+				return;
+			}
+			// Find out file size.
+			resource_fstream.seekg(0, std::ifstream::end);
+			m_resource_size_bytes =
+				static_cast<std::size_t>(
+					resource_fstream.tellg());
+			m_resource_buffer.reset(
+				new char[m_resource_size_bytes]);
+			resource_fstream.seekg(std::ifstream::beg);
+			resource_fstream.read(m_resource_buffer.get(),
+				m_resource_size_bytes);
+			m_response_headers += std::string("content-length") +
+				": " +
+				std::to_string(m_resource_size_bytes) +
+				"\r\n";
+		}
+
+		void send_response() {
+			m_sock->shutdown(
+				asio::ip::tcp::socket::shutdown_receive);
+			auto status_line =
+				http_status_table.at(m_response_status_code);
+			m_response_status_line = std::string("HTTP/1.1 ") +
+				status_line +
+				"\r\n";
+			m_response_headers += "\r\n";
+			std::vector<asio::const_buffer> response_buffers;
+			response_buffers.push_back(
+				asio::buffer(m_response_status_line));
+			if (m_response_headers.length() > 0) {
+				response_buffers.push_back(
+					asio::buffer(m_response_headers));
+			}
+			if (m_resource_size_bytes > 0) {
+				response_buffers.push_back(
+					asio::buffer(m_resource_buffer.get(),
+						m_resource_size_bytes));
+			}
+			// Initiate asynchronous write operation.
+			asio::async_write(*m_sock.get(),
+				response_buffers,
+				[this](
+					const boost::system::error_code& ec,
+					std::size_t bytes_transferred)
+			{
+				on_response_sent(ec,
+					bytes_transferred);
+			});
+		}
+		void on_response_sent(const boost::system::error_code& ec,
+			std::size_t bytes_transferred)
+		{
+			if (ec.value() != 0) {
+				std::cout << "Error occured! Error code = "
+					<< ec.value()
+					<< ". Message: " << ec.message();
+			}
+			m_sock->shutdown(asio::ip::tcp::socket::shutdown_both);
+			on_finish();
+		}
+
+		// Here we perform the cleanup.
+		void on_finish() {
+			delete this;
+		}
+
+
+	private:
+		std::shared_ptr<boost::asio::ip::tcp::socket> m_sock;
+		boost::asio::streambuf m_request;
+		std::map<std::string, std::string> m_request_headers;
+		std::string m_requested_resource;
+		std::unique_ptr<char[]> m_resource_buffer;
+		unsigned int m_response_status_code;
+		std::size_t m_resource_size_bytes;
+		std::string m_response_headers;
+		std::string m_response_status_line;
+
+	};
+	const std::map<unsigned int, std::string>
+		Service::http_status_table =
+	{
+		{ 200, "200 OK" },
+		{ 404, "404 Not Found" },
+		{ 413, "413 Request Entity Too Large" },
+		{ 500, "500 Server Error" },
+		{ 501, "501 Not Implemented" },
+		{ 505, "505 HTTP Version Not Supported" }
+	};
+
+	void Test_Server() {
+		asio::io_service ios;
+		std::shared_ptr<boost::asio::ip::tcp::socket> sock = std::make_shared<boost::asio::ip::tcp::socket>(ios);
+		
+		try {
+			asio::ip::tcp::acceptor acc(ios);
+			unsigned short port_num = 3333;
+
+			asio::ip::tcp::endpoint ep(asio::ip::address_v4::any(), port_num);
+
+			acc.open(ep.protocol());
+
+			acc.bind(ep);
+
+			acc.listen();
+
+			Service sr(sock);
+			acc.accept(*sock);
+
+			sr.start_handling();
+		}
+		catch (boost::system::system_error &e) {
+			std::cout << "Error Code = " << e.code()
+				<< ", Message = " << e.what();
+		}
+		
+		
+	}
+
+
+
 }
 int main() {
 
@@ -3613,7 +3922,7 @@ int main() {
 	//Test_First_TCP_ASYN();
 	//ASYNC_CANCEL();
 	//Test_Shutdown_TCP();
-	
+
 
 	//====CH.3====
 	//C3_SYN_TCP_CLIENT();
@@ -3631,5 +3940,6 @@ int main() {
 
 	//====CH.5====
 	C5_Client_ASYN();
+	//HTTP_SERVER::Test_Server();
 	std::system("pause");
 }
