@@ -3887,6 +3887,8 @@ namespace HTTP_SERVER {
 			acc.accept(*sock);
 
 			sr.start_handling();
+			
+			ios.run();
 		}
 		catch (boost::system::system_error &e) {
 			std::cout << "Error Code = " << e.code()
@@ -3939,7 +3941,7 @@ int main() {
 	//Test_C3_C4_3();
 
 	//====CH.5====
-	C5_Client_ASYN();
-	//HTTP_SERVER::Test_Server();
+	//C5_Client_ASYN();
+	HTTP_SERVER::Test_Server();
 	std::system("pause");
 }
