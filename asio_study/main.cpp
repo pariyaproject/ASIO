@@ -5,6 +5,7 @@
 #include<mutex>
 #include<memory>
 #include <boost/filesystem.hpp>
+#include <boost/asio/ssl.hpp>
 using namespace boost;
 //basic
 //在创建端点（endpoint）之前，客户端应用程序必须获取原始IP地址和指定将与之通信的服务器的协议端口号
@@ -2839,6 +2840,293 @@ private:
 	std::string m_response;
 	asio::streambuf m_request;
 };
+#define DMESSAGE(x)\
+{\
+std::cout <<"DEBUG: "<< x << std::endl;\
+}
+//测试
+namespace HTTP_SERVER {
+
+
+	class Service {
+		static const std::map<unsigned int, std::string>
+			http_status_table;
+
+	public:
+		Service(std::shared_ptr<boost::asio::ip::tcp::socket> sock) :
+			m_sock(sock),
+			m_request(4096),
+			m_response_status_code(200), // Assume success.
+			m_resource_size_bytes(0)
+		{};
+
+
+		void start_handling() {
+			DMESSAGE("start_handling");
+			asio::async_read_until(*m_sock.get(),
+				m_request,
+				"\r\n",
+				[this](
+					const boost::system::error_code& ec,
+					std::size_t bytes_transferred)
+			{
+				DMESSAGE("BEFORE: on_request_line_received");
+				on_request_line_received(ec,
+					bytes_transferred);
+			});
+		}
+
+	private:
+		void on_request_line_received(
+			const boost::system::error_code& ec,
+			std::size_t bytes_transferred)
+		{
+			if (ec.value() != 0) {
+				std::cout << "Error occured! Error code = "
+					<< ec.value()
+					<< ". Message: " << ec.message();
+				if (ec == asio::error::not_found) {
+					// No delimiter has been found in the
+					// request message.
+					m_response_status_code = 413;
+					send_response();
+					return;
+				}
+				else {
+					// In case of any other error –
+					// close the socket and clean up.
+					on_finish();
+					return;
+				}
+			}
+			// Parse the request line.
+			std::string request_line;
+			DMESSAGE("request_line = " + request_line);
+			std::istream request_stream(&m_request);
+			std::getline(request_stream, request_line, '\r');
+			// Remove symbol '\n' from the buffer.
+			request_stream.get();
+			// Parse the request line.
+			std::string request_method;
+			std::istringstream request_line_stream(request_line);
+			request_line_stream >> request_method;
+			// We only support GET method.
+			if (request_method.compare("GET") != 0) {
+				// Unsupported method.
+				m_response_status_code = 501;
+				send_response();
+				return;
+			}
+			request_line_stream >> m_requested_resource;
+			std::string request_http_version;
+			request_line_stream >> request_http_version;
+			if (request_http_version.compare("HTTP/1.1") != 0) {
+				// Unsupported HTTP version or bad request.
+				m_response_status_code = 505;
+				send_response();
+				return;
+			}
+			// At this point the request line is successfully
+			// received and parsed. Now read the request headers.
+			asio::async_read_until(*m_sock.get(),
+				m_request,
+				"\r\n\r\n",
+				[this](
+					const boost::system::error_code& ec,
+					std::size_t bytes_transferred)
+			{
+				on_headers_received(ec,
+					bytes_transferred);
+			});
+			return;
+		}
+		void on_headers_received(const boost::system::error_code& ec,
+			std::size_t bytes_transferred)
+		{
+			if (ec.value() != 0) {
+				std::cout << "Error occured! Error code = "
+					<< ec.value()
+					<< ". Message: " << ec.message();
+				if (ec == asio::error::not_found) {
+					// No delimiter has been fonud in the
+					// request message.
+					m_response_status_code = 413;
+					send_response();
+					return;
+				}
+				else {
+					// In case of any other error - close the
+					// socket and clean up.
+					on_finish();
+					return;
+				}
+			}
+			// Parse and store headers.
+			std::istream request_stream(&m_request);
+			std::string header_name, header_value;
+			while (!request_stream.eof()) {
+				std::getline(request_stream, header_name, ':');
+				if (!request_stream.eof()) {
+					std::getline(request_stream,
+						header_value,
+						'\r');
+					// Remove symbol \n from the stream.
+					request_stream.get();
+					m_request_headers[header_name] =
+						header_value;
+				}
+			}
+			// Now we have all we need to process the request.
+			process_request();
+			send_response();
+			return;
+		}
+
+		void process_request() {
+			// Read file.
+			std::string resource_file_path =
+				std::string("Z:\\github\\Bangumi_for_qq\\") +
+				m_requested_resource;
+			if (!boost::filesystem::exists(resource_file_path)) {
+				// Resource not found.
+				m_response_status_code = 404;
+				return;
+			}
+			std::ifstream resource_fstream(
+				resource_file_path,
+				std::ifstream::binary);
+			if (!resource_fstream.is_open()) {
+				// Could not open file.
+				// Something bad has happened.
+				m_response_status_code = 500;
+
+				return;
+			}
+			// Find out file size.
+			resource_fstream.seekg(0, std::ifstream::end);
+			m_resource_size_bytes =
+				static_cast<std::size_t>(
+					resource_fstream.tellg());
+			m_resource_buffer.reset(
+				new char[m_resource_size_bytes]);
+			resource_fstream.seekg(std::ifstream::beg);
+			resource_fstream.read(m_resource_buffer.get(),
+				m_resource_size_bytes);
+			m_response_headers += std::string("content-length") +
+				": " +
+				std::to_string(m_resource_size_bytes) +
+				"\r\n";
+		}
+
+		void send_response() {
+			m_sock->shutdown(
+				asio::ip::tcp::socket::shutdown_receive);
+			auto status_line =
+				http_status_table.at(m_response_status_code);
+			m_response_status_line = std::string("HTTP/1.1 ") +
+				status_line +
+				"\r\n";
+			m_response_headers += "\r\n";
+			std::vector<asio::const_buffer> response_buffers;
+			response_buffers.push_back(
+				asio::buffer(m_response_status_line));
+			if (m_response_headers.length() > 0) {
+				response_buffers.push_back(
+					asio::buffer(m_response_headers));
+			}
+			if (m_resource_size_bytes > 0) {
+				response_buffers.push_back(
+					asio::buffer(m_resource_buffer.get(),
+						m_resource_size_bytes));
+			}
+			// Initiate asynchronous write operation.
+			asio::async_write(*m_sock.get(),
+				response_buffers,
+				[this](
+					const boost::system::error_code& ec,
+					std::size_t bytes_transferred)
+			{
+				on_response_sent(ec,
+					bytes_transferred);
+			});
+		}
+		void on_response_sent(const boost::system::error_code& ec,
+			std::size_t bytes_transferred)
+		{
+			if (ec.value() != 0) {
+				std::cout << "Error occured! Error code = "
+					<< ec.value()
+					<< ". Message: " << ec.message();
+			}
+			m_sock->shutdown(asio::ip::tcp::socket::shutdown_both);
+			on_finish();
+		}
+
+		// Here we perform the cleanup.
+		void on_finish() {
+			delete this;
+		}
+
+
+	private:
+		std::shared_ptr<boost::asio::ip::tcp::socket> m_sock;
+		boost::asio::streambuf m_request;
+		std::map<std::string, std::string> m_request_headers;
+		std::string m_requested_resource;
+		std::unique_ptr<char[]> m_resource_buffer;
+		unsigned int m_response_status_code;
+		std::size_t m_resource_size_bytes;
+		std::string m_response_headers;
+		std::string m_response_status_line;
+
+	};
+	const std::map<unsigned int, std::string>
+		Service::http_status_table =
+	{
+		{ 200, "200 OK" },
+		{ 404, "404 Not Found" },
+		{ 413, "413 Request Entity Too Large" },
+		{ 500, "500 Server Error" },
+		{ 501, "501 Not Implemented" },
+		{ 505, "505 HTTP Version Not Supported" }
+	};
+
+	void Test_Server() {
+		asio::io_service ios;
+		std::shared_ptr<boost::asio::ip::tcp::socket> sock = std::make_shared<boost::asio::ip::tcp::socket>(ios);
+
+		try {
+			asio::ip::tcp::acceptor acc(ios);
+			unsigned short port_num = 3333;
+
+			asio::ip::tcp::endpoint ep(asio::ip::address_v4::any(), port_num);
+
+			acc.open(ep.protocol());
+
+			acc.bind(ep);
+
+			acc.listen();
+
+			Service sr(sock);
+			acc.accept(*sock);
+
+			sr.start_handling();
+
+			ios.run();
+		}
+		catch (boost::system::system_error &e) {
+			std::cout << "Error Code = " << e.code()
+				<< ", Message = " << e.what();
+		}
+
+
+	}
+
+
+
+}
+
+//
 
 class Acceptor3 {
 public:
@@ -2873,7 +3161,7 @@ private:
 	void onAccept(const boost::system::error_code&ec,
 		std::shared_ptr<asio::ip::tcp::socket>sock) {
 		if (ec.value() == 0) {
-			(new Service3(sock))->StartHandling();
+			(new HTTP_SERVER::Service(sock))->start_handling();
 		}
 
 		else {
@@ -2910,6 +3198,8 @@ public:
 
 		for (unsigned int i = 0; i < thread_pool_size; i++) {
 			std::unique_ptr<std::thread> th(
+				//https://blog.csdn.net/jlusuoya/article/details/75299096
+				//捕获列表
 				new std::thread([this]() {
 				m_ios.run();
 			})
@@ -3093,10 +3383,7 @@ namespace boost {
 //1.哪个请求已经完成
 //2.响应是什么 
 //3.请求是否成功完成,如果没有错误代码指定发生的错误
-#define DMESSAGE(x)\
-{\
-std::cout <<"DEBUG: "<< x << std::endl;\
-}
+
 //以下是回调函数指针类型声明的外观
 class HTTPClient;
 class HTTPRequest;
@@ -3621,286 +3908,124 @@ int C5_Client_ASYN() {
 
 
 //接下来实现一个HTTP服务器
-namespace HTTP_SERVER {
+//已转3196行
 
 
-	class Service {
-		static const std::map<unsigned int, std::string>
-			http_status_table;
+//客户端应用程序通常使用SSL/TLS发送敏感数据如密码,信用卡号,个人数据
+//SSL/TLS允许客户端对服务器进行身份验证并加密数据
+//服务器的身份验证允许客户端确保将数据发送到预期的收件人
 
-	public:
-		Service(std::shared_ptr<boost::asio::ip::tcp::socket> sock) :
-			m_sock(sock),
-			m_request(4096),
-			m_response_status_code(200), // Assume success.
-			m_resource_size_bytes(0)
-		{};
+//数据加密保证即使传输的数据在到达服务器的途中被截获,拦截器也无法使用它
+//使用OpenSSL库实现支持SSL/TLS协议的同步TCP客户端应用程序
 
-
-		void start_handling() {
-			DMESSAGE("start_handling");
-			asio::async_read_until(*m_sock.get(),
-				m_request,
-				"\r\n",
-				[this](
-					const boost::system::error_code& ec,
-					std::size_t bytes_transferred)
-			{
-				DMESSAGE("BEFORE: on_request_line_received");
-				on_request_line_received(ec,
-					bytes_transferred);
-			});
-		}
-
-	private:
-		void on_request_line_received(
-			const boost::system::error_code& ec,
-			std::size_t bytes_transferred)
-		{
-			if (ec.value() != 0) {
-				std::cout << "Error occured! Error code = "
-					<< ec.value()
-					<< ". Message: " << ec.message();
-				if (ec == asio::error::not_found) {
-					// No delimiter has been found in the
-					// request message.
-					m_response_status_code = 413;
-					send_response();
-					return;
-				}
-				else {
-					// In case of any other error –
-					// close the socket and clean up.
-					on_finish();
-					return;
-				}
-			}
-			// Parse the request line.
-			std::string request_line;
-			DMESSAGE("request_line = " + request_line);
-			std::istream request_stream(&m_request);
-			std::getline(request_stream, request_line, '\r');
-			// Remove symbol '\n' from the buffer.
-			request_stream.get();
-			// Parse the request line.
-			std::string request_method;
-			std::istringstream request_line_stream(request_line);
-			request_line_stream >> request_method;
-			// We only support GET method.
-			if (request_method.compare("GET") != 0) {
-				// Unsupported method.
-				m_response_status_code = 501;
-				send_response();
-				return;
-			}
-			request_line_stream >> m_requested_resource;
-			std::string request_http_version;
-			request_line_stream >> request_http_version;
-			if (request_http_version.compare("HTTP/1.1") != 0) {
-				// Unsupported HTTP version or bad request.
-				m_response_status_code = 505;
-				send_response();
-				return;
-			}
-			// At this point the request line is successfully
-			// received and parsed. Now read the request headers.
-			asio::async_read_until(*m_sock.get(),
-				m_request,
-				"\r\n\r\n",
-				[this](
-					const boost::system::error_code& ec,
-					std::size_t bytes_transferred)
-			{
-				on_headers_received(ec,
-					bytes_transferred);
-			});
-			return;
-		}
-		void on_headers_received(const boost::system::error_code& ec,
-			std::size_t bytes_transferred)
-		{
-			if (ec.value() != 0) {
-				std::cout << "Error occured! Error code = "
-					<< ec.value()
-					<< ". Message: " << ec.message();
-				if (ec == asio::error::not_found) {
-					// No delimiter has been fonud in the
-					// request message.
-					m_response_status_code = 413;
-					send_response();
-					return;
-				}
-				else {
-					// In case of any other error - close the
-					// socket and clean up.
-					on_finish();
-					return;
-				}
-			}
-			// Parse and store headers.
-			std::istream request_stream(&m_request);
-			std::string header_name, header_value;
-			while (!request_stream.eof()) {
-				std::getline(request_stream, header_name, ':');
-				if (!request_stream.eof()) {
-					std::getline(request_stream,
-						header_value,
-						'\r');
-					// Remove symbol \n from the stream.
-					request_stream.get();
-					m_request_headers[header_name] =
-						header_value;
-				}
-			}
-			// Now we have all we need to process the request.
-			process_request();
-			send_response();
-			return;
-		}
-
-		void process_request() {
-			// Read file.
-			std::string resource_file_path =
-				std::string("Z:\\github\\Bangumi_for_qq\\") +
-				m_requested_resource;
-			if (!boost::filesystem::exists(resource_file_path)) {
-				// Resource not found.
-				m_response_status_code = 404;
-				return;
-			}
-			std::ifstream resource_fstream(
-				resource_file_path,
-				std::ifstream::binary);
-			if (!resource_fstream.is_open()) {
-				// Could not open file.
-				// Something bad has happened.
-				m_response_status_code = 500;
-
-				return;
-			}
-			// Find out file size.
-			resource_fstream.seekg(0, std::ifstream::end);
-			m_resource_size_bytes =
-				static_cast<std::size_t>(
-					resource_fstream.tellg());
-			m_resource_buffer.reset(
-				new char[m_resource_size_bytes]);
-			resource_fstream.seekg(std::ifstream::beg);
-			resource_fstream.read(m_resource_buffer.get(),
-				m_resource_size_bytes);
-			m_response_headers += std::string("content-length") +
-				": " +
-				std::to_string(m_resource_size_bytes) +
-				"\r\n";
-		}
-
-		void send_response() {
-			m_sock->shutdown(
-				asio::ip::tcp::socket::shutdown_receive);
-			auto status_line =
-				http_status_table.at(m_response_status_code);
-			m_response_status_line = std::string("HTTP/1.1 ") +
-				status_line +
-				"\r\n";
-			m_response_headers += "\r\n";
-			std::vector<asio::const_buffer> response_buffers;
-			response_buffers.push_back(
-				asio::buffer(m_response_status_line));
-			if (m_response_headers.length() > 0) {
-				response_buffers.push_back(
-					asio::buffer(m_response_headers));
-			}
-			if (m_resource_size_bytes > 0) {
-				response_buffers.push_back(
-					asio::buffer(m_resource_buffer.get(),
-						m_resource_size_bytes));
-			}
-			// Initiate asynchronous write operation.
-			asio::async_write(*m_sock.get(),
-				response_buffers,
-				[this](
-					const boost::system::error_code& ec,
-					std::size_t bytes_transferred)
-			{
-				on_response_sent(ec,
-					bytes_transferred);
-			});
-		}
-		void on_response_sent(const boost::system::error_code& ec,
-			std::size_t bytes_transferred)
-		{
-			if (ec.value() != 0) {
-				std::cout << "Error occured! Error code = "
-					<< ec.value()
-					<< ". Message: " << ec.message();
-			}
-			m_sock->shutdown(asio::ip::tcp::socket::shutdown_both);
-			on_finish();
-		}
-
-		// Here we perform the cleanup.
-		void on_finish() {
-			delete this;
-		}
-
-
-	private:
-		std::shared_ptr<boost::asio::ip::tcp::socket> m_sock;
-		boost::asio::streambuf m_request;
-		std::map<std::string, std::string> m_request_headers;
-		std::string m_requested_resource;
-		std::unique_ptr<char[]> m_resource_buffer;
-		unsigned int m_response_status_code;
-		std::size_t m_resource_size_bytes;
-		std::string m_response_headers;
-		std::string m_response_status_line;
-
-	};
-	const std::map<unsigned int, std::string>
-		Service::http_status_table =
+//在开始使用时,需要先安装OpenSSL库
+//#include <boost/asio/ssl.hpp>
+class SyncSSLClient {
+public:
+	SyncSSLClient(const std::string& raw_ip_address,
+		unsigned short port_num) :
+		m_ep(asio::ip::address::from_string(raw_ip_address),
+			port_num),
+		//指定应用程序仅使用客户端角色还使用上下文,并且希望支持多个安全协议,包括多个版本SSL/TLS
+		m_ssl_context(asio::ssl::context::sslv3_client),
+		//
+		m_ssl_stream(m_ios, m_ssl_context)
 	{
-		{ 200, "200 OK" },
-		{ 404, "404 Not Found" },
-		{ 413, "413 Request Entity Too Large" },
-		{ 500, "500 Server Error" },
-		{ 501, "501 Not Implemented" },
-		{ 505, "505 HTTP Version Not Supported" }
-	};
-
-	void Test_Server() {
-		asio::io_service ios;
-		std::shared_ptr<boost::asio::ip::tcp::socket> sock = std::make_shared<boost::asio::ip::tcp::socket>(ios);
-		
-		try {
-			asio::ip::tcp::acceptor acc(ios);
-			unsigned short port_num = 3333;
-
-			asio::ip::tcp::endpoint ep(asio::ip::address_v4::any(), port_num);
-
-			acc.open(ep.protocol());
-
-			acc.bind(ep);
-
-			acc.listen();
-
-			Service sr(sock);
-			acc.accept(*sock);
-
-			sr.start_handling();
-			
-			ios.run();
-		}
-		catch (boost::system::system_error &e) {
-			std::cout << "Error Code = " << e.code()
-				<< ", Message = " << e.what();
-		}
-		
-		
+		// Set verification mode and designate that
+		// we want to perform verification.
+		//首先用户认证模式被设定为asio::ssl::verify_peer
+		//这意味着在握手期间执行对等验证
+		m_ssl_stream.set_verify_mode(asio::ssl::verify_peer);
+		// Set verification callback.
+		//然后设置一个验证回调方法,当证书从服务器到达时将调用该方法
+		//对服务器发送的证书链中的每个证书调用一次回调
+		m_ssl_stream.set_verify_callback([this](
+			bool preverified,
+			asio::ssl::verify_context& context)->bool {
+			return on_peer_verify(preverified, context);
+		});
 	}
+	void connect() {
+		// Connect the TCP socket.
+		m_ssl_stream.lowest_layer().connect(m_ep);
+		// Perform the SSL handshake.
+		m_ssl_stream.handshake(asio::ssl::stream_base::client);
+	}
+	void close() {
+		// We ignore any errors that might occur
+		// during shutdown as we anyway can't
+		// do anything about them.
+		boost::system::error_code ec;
+		// shutdown（）方法是同步的并且阻塞，直到SSL连接关闭或发生错误
+		m_ssl_stream.shutdown(ec); // Shutdown SSL.
+								   // Shut down the socket.
+		m_ssl_stream.lowest_layer().shutdown(
+			boost::asio::ip::tcp::socket::shutdown_both, ec);
+		m_ssl_stream.lowest_layer().close(ec);
+	}
+	std::string emulate_long_computation_op(
+		unsigned int duration_sec) {
+		std::string request = "EMULATE_LONG_COMP_OP "
+			+ std::to_string(duration_sec)
+			+ "\n";
+		send_request(request);
+		return receive_response();
+	};
+private:
+	bool on_peer_verify(bool preverified,
+		asio::ssl::verify_context& context)
+	{
+		// Here the certificate should be verified and the
+		// verification result should be returned.
+		return true;
+	}
+	void send_request(const std::string& request) {
+		asio::write(m_ssl_stream, asio::buffer(request));
+	}
+	std::string receive_response() {
+		asio::streambuf buf;
+		asio::read_until(m_ssl_stream, buf, '\n');
+		std::string response;
+		std::istream input(&buf);
+		std::getline(input, response);
+		return response;
+	}
+private:
+	asio::io_service m_ios;
+	asio::ip::tcp::endpoint m_ep;
+	//一个表示SSL上下文的对象
+	//基本上，这是OpenSSL库定义的SSL_CTX数据结构的包装器。
+	//此对象包含使用SSL / TLS协议进行通信的其他对象和函数所使用的全局设置和参数
+	asio::ssl::context m_ssl_context;
+	//这表示包装TCP套接字对象并实现所有SSL/TLS通信操作的流
+	asio::ssl::stream<asio::ip::tcp::socket>m_ssl_stream;
+};
 
-
-
+int Test_SSL_TLS_Client() {
+	const std::string raw_ip_address = "pariya.cc";
+	const unsigned short port_num = 80;
+	try {
+		SyncSSLClient client(raw_ip_address, port_num);
+		// Sync connect.
+		client.connect();
+		std::cout << "Sending request to the server... "
+			<< std::endl;
+		std::string response =
+			client.emulate_long_computation_op(10);
+		std::cout << "Response received: " << response
+			<< std::endl;
+		// Close the connection and free resources.
+		client.close();
+	}
+	catch (system::system_error &e) {
+		std::cout << "Error occured! Error code = " << e.code()
+			<< ". Message: " << e.what();
+		return e.code().value();
+	}
+	return 0;
 }
+//p217
+//p226
 int main() {
 
 	//====CH.1====
@@ -3937,11 +4062,13 @@ int main() {
 	//Test_C3_C4_1();
 	//C4_SYN_TCP_MServer();
 	//Test_C3_C4_2();
-	//C4_ASYN_TCP_MServer();
+	//C4_ASYN_TCP_MServer(); //加上了第5章的测试HTTP
 	//Test_C3_C4_3();
 
 	//====CH.5====
 	//C5_Client_ASYN();
-	HTTP_SERVER::Test_Server();
+	//HTTP_SERVER::Test_Server();
+	Test_SSL_TLS_Client();
+
 	std::system("pause");
 }
