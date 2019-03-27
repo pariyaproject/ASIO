@@ -5,7 +5,7 @@
 #include<mutex>
 #include<memory>
 #include <boost/filesystem.hpp>
-#include <boost/asio/ssl.hpp>
+//#include <boost/asio/ssl.hpp>
 using namespace boost;
 //basic
 //在创建端点（endpoint）之前，客户端应用程序必须获取原始IP地址和指定将与之通信的服务器的协议端口号
@@ -3920,112 +3920,195 @@ int C5_Client_ASYN() {
 
 //在开始使用时,需要先安装OpenSSL库
 //#include <boost/asio/ssl.hpp>
-class SyncSSLClient {
-public:
-	SyncSSLClient(const std::string& raw_ip_address,
-		unsigned short port_num) :
-		m_ep(asio::ip::address::from_string(raw_ip_address),
-			port_num),
-		//指定应用程序仅使用客户端角色还使用上下文,并且希望支持多个安全协议,包括多个版本SSL/TLS
-		m_ssl_context(asio::ssl::context::sslv3_client),
-		//
-		m_ssl_stream(m_ios, m_ssl_context)
-	{
-		// Set verification mode and designate that
-		// we want to perform verification.
-		//首先用户认证模式被设定为asio::ssl::verify_peer
-		//这意味着在握手期间执行对等验证
-		m_ssl_stream.set_verify_mode(asio::ssl::verify_peer);
-		// Set verification callback.
-		//然后设置一个验证回调方法,当证书从服务器到达时将调用该方法
-		//对服务器发送的证书链中的每个证书调用一次回调
-		m_ssl_stream.set_verify_callback([this](
-			bool preverified,
-			asio::ssl::verify_context& context)->bool {
-			return on_peer_verify(preverified, context);
-		});
-	}
-	void connect() {
-		// Connect the TCP socket.
-		m_ssl_stream.lowest_layer().connect(m_ep);
-		// Perform the SSL handshake.
-		m_ssl_stream.handshake(asio::ssl::stream_base::client);
-	}
-	void close() {
-		// We ignore any errors that might occur
-		// during shutdown as we anyway can't
-		// do anything about them.
-		boost::system::error_code ec;
-		// shutdown（）方法是同步的并且阻塞，直到SSL连接关闭或发生错误
-		m_ssl_stream.shutdown(ec); // Shutdown SSL.
-								   // Shut down the socket.
-		m_ssl_stream.lowest_layer().shutdown(
-			boost::asio::ip::tcp::socket::shutdown_both, ec);
-		m_ssl_stream.lowest_layer().close(ec);
-	}
-	std::string emulate_long_computation_op(
-		unsigned int duration_sec) {
-		std::string request = "EMULATE_LONG_COMP_OP "
-			+ std::to_string(duration_sec)
-			+ "\n";
-		send_request(request);
-		return receive_response();
-	};
-private:
-	bool on_peer_verify(bool preverified,
-		asio::ssl::verify_context& context)
-	{
-		// Here the certificate should be verified and the
-		// verification result should be returned.
-		return true;
-	}
-	void send_request(const std::string& request) {
-		asio::write(m_ssl_stream, asio::buffer(request));
-	}
-	std::string receive_response() {
-		asio::streambuf buf;
-		asio::read_until(m_ssl_stream, buf, '\n');
-		std::string response;
-		std::istream input(&buf);
-		std::getline(input, response);
-		return response;
-	}
-private:
-	asio::io_service m_ios;
-	asio::ip::tcp::endpoint m_ep;
-	//一个表示SSL上下文的对象
-	//基本上，这是OpenSSL库定义的SSL_CTX数据结构的包装器。
-	//此对象包含使用SSL / TLS协议进行通信的其他对象和函数所使用的全局设置和参数
-	asio::ssl::context m_ssl_context;
-	//这表示包装TCP套接字对象并实现所有SSL/TLS通信操作的流
-	asio::ssl::stream<asio::ip::tcp::socket>m_ssl_stream;
-};
+//class SyncSSLClient {
+//public:
+//	SyncSSLClient(const std::string& raw_ip_address,
+//		unsigned short port_num) :
+//		m_ep(asio::ip::address::from_string(raw_ip_address),
+//			port_num),
+//		//指定应用程序仅使用客户端角色还使用上下文,并且希望支持多个安全协议,包括多个版本SSL/TLS
+//		m_ssl_context(asio::ssl::context::sslv3_client),
+//		//
+//		m_ssl_stream(m_ios, m_ssl_context)
+//	{
+//		// Set verification mode and designate that
+//		// we want to perform verification.
+//		//首先用户认证模式被设定为asio::ssl::verify_peer
+//		//这意味着在握手期间执行对等验证
+//		m_ssl_stream.set_verify_mode(asio::ssl::verify_peer);
+//		// Set verification callback.
+//		//然后设置一个验证回调方法,当证书从服务器到达时将调用该方法
+//		//对服务器发送的证书链中的每个证书调用一次回调
+//		m_ssl_stream.set_verify_callback([this](
+//			bool preverified,
+//			asio::ssl::verify_context& context)->bool {
+//			return on_peer_verify(preverified, context);
+//		});
+//	}
+//	void connect() {
+//		// Connect the TCP socket.
+//		m_ssl_stream.lowest_layer().connect(m_ep);
+//		// Perform the SSL handshake.
+//		m_ssl_stream.handshake(asio::ssl::stream_base::client);
+//	}
+//	void close() {
+//		// We ignore any errors that might occur
+//		// during shutdown as we anyway can't
+//		// do anything about them.
+//		boost::system::error_code ec;
+//		// shutdown（）方法是同步的并且阻塞，直到SSL连接关闭或发生错误
+//		m_ssl_stream.shutdown(ec); // Shutdown SSL.
+//								   // Shut down the socket.
+//		m_ssl_stream.lowest_layer().shutdown(
+//			boost::asio::ip::tcp::socket::shutdown_both, ec);
+//		m_ssl_stream.lowest_layer().close(ec);
+//	}
+//	std::string emulate_long_computation_op(
+//		unsigned int duration_sec) {
+//		std::string request = "EMULATE_LONG_COMP_OP "
+//			+ std::to_string(duration_sec)
+//			+ "\n";
+//		send_request(request);
+//		return receive_response();
+//	};
+//private:
+//	bool on_peer_verify(bool preverified,
+//		asio::ssl::verify_context& context)
+//	{
+//		// Here the certificate should be verified and the
+//		// verification result should be returned.
+//		return true;
+//	}
+//	void send_request(const std::string& request) {
+//		asio::write(m_ssl_stream, asio::buffer(request));
+//	}
+//	std::string receive_response() {
+//		asio::streambuf buf;
+//		asio::read_until(m_ssl_stream, buf, '\n');
+//		std::string response;
+//		std::istream input(&buf);
+//		std::getline(input, response);
+//		return response;
+//	}
+//private:
+//	asio::io_service m_ios;
+//	asio::ip::tcp::endpoint m_ep;
+//	//一个表示SSL上下文的对象
+//	//基本上，这是OpenSSL库定义的SSL_CTX数据结构的包装器。
+//	//此对象包含使用SSL / TLS协议进行通信的其他对象和函数所使用的全局设置和参数
+//	asio::ssl::context m_ssl_context;
+//	//这表示包装TCP套接字对象并实现所有SSL/TLS通信操作的流
+//	asio::ssl::stream<asio::ip::tcp::socket>m_ssl_stream;
+//};
 
-int Test_SSL_TLS_Client() {
-	const std::string raw_ip_address = "pariya.cc";
-	const unsigned short port_num = 80;
-	try {
-		SyncSSLClient client(raw_ip_address, port_num);
-		// Sync connect.
-		client.connect();
-		std::cout << "Sending request to the server... "
-			<< std::endl;
-		std::string response =
-			client.emulate_long_computation_op(10);
-		std::cout << "Response received: " << response
-			<< std::endl;
-		// Close the connection and free resources.
-		client.close();
-	}
-	catch (system::system_error &e) {
-		std::cout << "Error occured! Error code = " << e.code()
-			<< ". Message: " << e.what();
-		return e.code().value();
-	}
-	return 0;
-}
+//由于openSSL环境问题不能正常编译,暂时注释
+//int Test_SSL_TLS_Client() {
+//	const std::string raw_ip_address = "pariya.cc";
+//	const unsigned short port_num = 80;
+//	try {
+//		SyncSSLClient client(raw_ip_address, port_num);
+//		// Sync connect.
+//		client.connect();
+//		std::cout << "Sending request to the server... "
+//			<< std::endl;
+//		std::string response =
+//			client.emulate_long_computation_op(10);
+//		std::cout << "Response received: " << response
+//			<< std::endl;
+//		// Close the connection and free resources.
+//		client.close();
+//	}
+//	catch (system::system_error &e) {
+//		std::cout << "Error occured! Error code = " << e.code()
+//			<< ". Message: " << e.what();
+//		return e.code().value();
+//	}
+//	return 0;
+//}
 //p217
 //p226
+
+//====CH.6====
+//本章包含了核心Boost.Asio概念
+//Boost.Asio计时器是一种功能强大的仪器,可以测量时间间隔
+//并且可用于解决与网络无关的其他任务
+
+//允许获取和设置套接字选项的工具也十分重要,
+//Boost.Asio类包装套接字并为其提供类似流的接口,使我们能够
+//创建简单而优雅的分布式应用程序
+
+//[使用复合缓冲区进行分散/收集操作]
+//第二章I/O操作中的使用固定长度I/O缓冲区,但仅略微涉及分散/收集操作和复合缓冲区
+//
+//复合缓冲区基本上是一个复杂的缓冲区,由两个或多个分布在进程地址空间上的
+//简单缓冲区(连续的内存块)组成
+//这种缓冲在两种情况下变得特别方便
+//1.应用程序在将消息发送到远程应用程序之前需要缓冲区来存储消息
+//或者接收远程应用程序发送的消息,问题是消息的大小太大,以至玩分配足以存储它的单个连续缓冲区可能会由于进程的地址空间碎片
+//而失败,这种情况下分配多个较小的缓冲区,其总和的大小中心存储数据
+//并将它们组合在单个复合缓冲区中是一个很好的解决方案
+//2.由于应用程序设计的特殊性,要发送到远程应用程序的消息被分成几个部分并存储在
+//不同的缓冲区中,或者如果要从远程应用程序接收的消息需要分成几个部分,每个部分其中应
+//存储在单独的缓冲区中以供进一步处理
+//
+//在这两种情况下将多个缓冲区组合到一个复合缓冲区中然后使用分散发送或收集接收操作将是
+//解决该问题的好方法
+
+
+//以下算法描述了如何准备与socket执行输出操作的方法一起使用的复合缓冲区
+//例如asio::ip::tcp::socket::send()或自由函数asio::write()
+//1.根据需要分配尽可能多的内存缓冲区以执行手头的任务,请注意,此步骤不涉及Boost.Asio中的任何功能或数据类型
+//2.使用要输出的数据填充缓冲区
+//3.创建满足ConstBufferSequence或MultipleBufferSequence概念要求的类的实例,表示复合缓冲区
+//4.将简单缓冲区添加到复合缓冲区.每个简单缓冲区应该表示为asio::const_buffer或asio::mutable_buffer类的实例
+//5.复合缓冲区已准备好与Boost.Asio输出功能一起使用
+
+int C6_Send_Buffer_1() {
+	const char *part1 = "Hello ";
+	const char *part2 = "my ";
+	const char *part3 = "friend!";
+
+	std::vector<asio::const_buffer> composite_buffer;
+
+	composite_buffer.push_back(asio::const_buffer(part1, 6));
+	composite_buffer.push_back(asio::const_buffer(part2, 3));
+	composite_buffer.push_back(asio::const_buffer(part3, 7));
+
+
+	return 0;
+}
+
+//以下算法描述了如何准备与socket执行输入操作的方法一起使用的复合缓冲区
+//例如asio::ip::tcp::socket::receive()或自由函数asio::read();
+//1.根据需要分配尽可能多的内存缓冲区以执行手头的任务。
+//缓冲区大小的总和必须等于或大于要在这些缓冲区中接收的预期消息的大小。
+//请注意，此步骤不涉及Boost.Asio中的任何功能或数据类型
+//2.创建一个类的实例，该类满足MutableBufferSequence概念的表示复合缓冲区的要求
+//3.将简单缓冲区添加到复合缓冲区。
+//每个简单缓冲区应该表示为asio::mutable_buffer类的一个实例。
+//4.复合缓冲区已准备好与Boost.Asio输入操作一起使用
+
+
+int C6_Receive_Buffer_1() {
+	// Step 1. Allocate simple buffers.
+	char part1[6];
+	char part2[3];
+	char part3[7];
+	// Step 2. Create an object representing a composite buffer.
+	std::vector<asio::mutable_buffer> composite_buffer;
+	// Step 3. Add simple buffers to the composite buffer object.
+	composite_buffer.push_back(asio::mutable_buffer(part1,
+		sizeof(part1)));
+	composite_buffer.push_back(asio::mutable_buffer(part2,
+		sizeof(part2)));
+	composite_buffer.push_back(asio::mutable_buffer(part3,
+		sizeof(part3)));
+	// Now composite_buffer can be used with Boost.Asio
+	// input operation as if it was a simple buffer
+	// represented by contiguous block of memory.
+	return 0;
+}
+
 int main() {
 
 	//====CH.1====
@@ -4068,7 +4151,9 @@ int main() {
 	//====CH.5====
 	//C5_Client_ASYN();
 	//HTTP_SERVER::Test_Server();
-	Test_SSL_TLS_Client();
+	//Test_SSL_TLS_Client();
+
+	//====CH.6====
 
 	std::system("pause");
 }
