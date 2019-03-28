@@ -4108,6 +4108,199 @@ int C6_Receive_Buffer_1() {
 	// represented by contiguous block of memory.
 	return 0;
 }
+//
+//硬件定时器用于测量时间间隔的设备- 是任何计算机的基本组件,并且所有现代操作系统都提供允许
+//应用程序使用它的接口,有两个与计时器相关的典型用例
+//1.假定应用程序想知道当前时间并要求操作系统找到它
+//2.当应用程序要求操作系统在一定时间过去时通知它(通过调用回调)
+//2很重要,因为定时器是实现异步操作的超时机制的唯一方法
+
+//Boost.Asio库提供了两个实现计时器的模板类
+//其中一个是asio::basic_deadline_timer<>,这是Boost.Asio 1.49版本之前唯一可用
+//在1.49版本之后引入了第二个计时器asio::basic_waitable_timer<>类模板
+//asio::basic_deadline_timer<>类模板旨在与Boost.Chrono库兼容,并在内部
+//依赖于它提供的功能,此模板类有点过时,并有限的功能,因此不考虑使用它
+//相反与c++11 chrono库兼容的较新的asio::basic_waitable_timer<>类模板更灵活,并提供更多功能
+//
+//typedef basic_waitable_timer< std::chrono::system_clock >
+//system_timer;
+//typedef basic_waitable_timer< std::chrono::steady_clock >
+//steady_timer;
+//typedef basic_waitable_timer< std::chrono::high_resolution_clock >
+//high_resolution_timer;
+
+//asio::system_timer类基于std::chrono::system_clock类,它表示系统范围的实时时钟
+//该时钟(以及定时器)也受当前系统时间的外部变化的影响
+//因此,当我们需要设置一个计时器时,asio::system_timer是一个不错的选择
+//它会在达到某个绝对时间点时通知我们(例如:13H:15M:45S),同时考虑到系统时钟
+//的变化,定时器设置后制作,然而
+//该计时器不擅长测量时间间隔(例如,从现在起35秒),因为系统时钟移位可能导致计时器
+//在实际间隔过去之前或之后到期
+//asio::steady_timer类基于std::chrono::steady_clock类,它代表一个不受系统时钟变化影响的
+//稳定时钟,意味着asio::steady_timer是测量间隔的不错选择
+//最后一个计时器asio::high_resolution_timer类基于std::chrono::high_resolution_clock类
+//它代表一个高分辨率的系统时钟,它可用于需要高精度时间测量的情况
+
+//在使用Boost.Asio库实现的分布式应用程序中,定时器通常用于实现异步操作的超时时间
+//在异步操作开始之后(例如::asio::async_read())应用程序将启动一个设置为在一段时间
+//后过期的计时器,当计时器到期时,应用程序检查异步操作是否已完成
+//如果没有,则认为操作超时并取消
+
+//由于steady_timer不受系统时钟偏移的影响,因此最适合实现超时机制
+/*请注意，在某些平台上，稳定时钟不可用，并且表示std :: chrono :: steady_clock的相应类表现出与std :: chrono :: stystem_ clock相同的行为，这意味着就像后者一样，
+它受系统时钟变化的影响。
+建议参考平台文档和相应的C ++标准库实现，以确定稳定时钟是否实际稳定*/
+
+int Test_Steady_Timer() {
+	asio::io_service ios;
+
+	asio::steady_timer t1(ios);
+	//此方法将计时器切换到非过期状态并启动它。
+	//它接受一个参数，该参数表示时间间隔的持续时间，之后计时器应该到期。
+	//一旦过期将通知所有等待此计时器的到期事件的人
+	t1.expires_from_now(std::chrono::seconds(2));
+
+	asio::steady_timer t2(ios);
+	t2.expires_from_now(std::chrono::seconds(5));
+
+	//注册回调
+	t1.async_wait([&t2](boost::system::error_code ec) {
+		if (ec.value() == 0) {
+			std::cout << "Timer #2 has expired!" << std::endl;
+		}
+		else if (ec == asio::error::operation_aborted) {
+			std::cout << "Timer #2 has been cancelled!"
+				<< std::endl;
+		}
+		else {
+			std::cout << "Error occured! Error code = "
+				<< ec.value()
+				<< ". Message: " << ec.message()
+				<< std::endl;
+		}
+		//取消第二个计时器会导致调用到期回调，通知计时器在到期前被取消
+		t2.cancel();
+	});	t2.async_wait([](boost::system::error_code ec) {
+		if (ec.value() == 0) {
+			std::cout << "Timer #2 has expired!" << std::endl;
+		}
+		else if (ec == asio::error::operation_aborted) {
+			std::cout << "Timer #2 has been cancelled!"
+				<< std::endl;
+		}
+		else {
+			std::cout << "Error occured! Error code = "
+				<< ec.value()
+				<< ". Message: " << ec.message()
+				<< std::endl;
+		}
+	});	ios.run();
+	return 0;
+}
+
+//可以通过更改其各项的值来配置的属性及行为
+//实例化对象时,其选项具有默认值,在许多情况下,默认情况下配置的套接字
+//是完美的,而在其他情况下可能需要通过更改其选项的值来微调套接字
+//以使其满足应用的要求,在本文中,将了解如何使用Boost.Asio获取和设置套接字选项
+
+//每个套接字选项的值可以通过Boost.Asio提供的功能设置或获得，由一个单独的类表示
+//Boost.Asio仅支持有限数量的套接字选项。
+//要设置或获取其他套接字选项的值，开发人员可能需要通过添加表示所需选项的类来扩展Boost.Asio库
+//我们想让套接字的接收缓冲区的大小比现在的大小大两倍
+//我们首先需要获取缓冲区的当前大小，然后将其乘以2，最后将乘法后获得的值设置为新的接收缓冲区大小
+
+int Test_Set_Socket_Buffer() {
+	try {
+		asio::io_service ios;
+		// Create and open a TCP socket.
+		//在我们可以获取或设置特定套接字对象的选项之前，必须打开相应的套接字。
+		//因为在打开Boost.Asio套接字对象之前，尚未分配相应操作系统的基础本机套接字对象，并且没有任何设置选项或从中获取选项
+		asio::ip::tcp::socket sock(ios, asio::ip::tcp::v4());
+		// Create an object representing receive buffer
+		// size option.
+		asio::socket_base::receive_buffer_size cur_buf_size;
+		// Get the currently set value of the option.
+		sock.get_option(cur_buf_size);
+		std::cout << "Current receive buffer size is "
+			<< cur_buf_size.value() << " bytes."
+			<< std::endl;
+		// Create an object representing receive buffer
+		// size option with new value.
+		asio::socket_base::receive_buffer_size
+			new_buf_size(cur_buf_size.value() * 2);
+		// Set new value of the option.
+		sock.set_option(new_buf_size);
+		std::cout << "New receive buffer size is "
+			<< new_buf_size.value() << " bytes."
+			<< std::endl;
+	}
+	catch (system::system_error &e) {
+		std::cout << "Error occured! Error code = " << e.code()
+			<< ". Message: " << e.what();
+		return e.code().value();
+	}
+	return 0;
+}
+
+
+//Boost.Asio库包含asio :: ip :: tcp :: iostream包装类，
+//它为TCP套接字对象提供类似I / O流的接口，这允许我们根据流表达进程间通信操作
+
+int Test_Stream() {
+	//使用构造函数构造流对象，该构造函数接受服务器DNS名称和协议端口号，并自动尝试解析DNS名称，然后尝试连接到该服务器。
+	//请注意，端口号表示为字符串而不是整数。
+	//这是因为传递给此构造函数的两个参数都直接用于创建解析程序查询，这需要将端口号表示为字符串
+	//当构造对象时，我们可以通过指定DNS名称和协议端口号来调用connect（）方法，以便执行解析并连接套接字
+	asio::ip::tcp::iostream stream("localhost", "3333");
+	if (!stream) {
+		std::cout << "Error occurred! Error code = "
+			<< stream.error().value()
+			<< ". Message = " << stream.error().message()
+			<< std::endl;
+		return -1;
+	}
+
+	stream << "Request.";
+	//flush（）方法以确保将所有缓冲的数据推送到服务器。
+	stream.flush();
+	//等待一会
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	std::cout << "[" << __func__ << "]Response: " << stream.rdbuf()<<std::endl;
+	return 0;
+}
+//我们不仅可以使用asio :: ip :: tcp :: iostream类以面向流的方式实现客户端I / O，我们还可以在服务器端执行I / O操作。
+//除此之外，该类允许我们指定操作的超时，这使得基于流的I / O比普通的同步I / O更有利。
+//我们来看看这是如何完成的。
+int Test_Stream_receive() {
+	//以下代码片段演示了如何使用asio :: ip :: tcp :: iostream类
+	//实现执行基于流的I / O的简单服务器：
+
+	asio::io_service io_service;
+	asio::ip::tcp::acceptor acceptor(io_service,
+		asio::ip::tcp::endpoint(asio::ip::address_v4::any(), 3333));
+	//asio::ip::tcp::endpoint(asio::ip::tcp::v4(),3333);
+	//两者都 OK
+
+	asio::ip::tcp::iostream stream;
+
+	//stream对象的rdbuf（）方法返回指向流缓冲区对象的指针
+	//这个流缓冲区对象是一个类的实例，它继承自asio :: ip :: tcp :: socket类，这意味着asio :: ip :: tcp :: iostream类的对象使用的流缓冲区
+	//扮演两个角色：一个是流缓冲区，另一个是socket
+	acceptor.accept(*stream.rdbuf());
+	//等待一会
+	std::this_thread::sleep_for(std::chrono::seconds(1));
+	std::cout << "["<<__func__<<"]Request: " << stream.rdbuf() << std::endl;
+	stream << "Response.";
+	stream.flush();
+	return 0;
+}
+//因为I / O操作由asio :: ip :: tcp :: stream类
+//提供阻塞执行的线程，并且它们可能运行了相当长的时间，
+//所以该类提供了一种设置超时时间的方法，
+//当它用完时，会导致当前阻塞线程的操作中断，如果有的话。
+//超时间隔可以通过asio::ip::tcp::stream类的
+//expires_from_now（）方法设置。
+
 
 int main() {
 
@@ -4154,6 +4347,14 @@ int main() {
 	//Test_SSL_TLS_Client();
 
 	//====CH.6====
-
+	//Test_Steady_Timer();
+	//Test_Set_Socket_Buffer();
+	
+	//事实上两者不能很好工作,可能与使用线程有关,原本是用来进程间通信的
+	//std::thread test_stream(Test_Stream_receive);
+	//std::thread test_stream1(Test_Stream);
+	//Test_Stream();
+	//test_stream1.join();
+	//test_stream.join();
 	std::system("pause");
 }
