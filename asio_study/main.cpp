@@ -4,8 +4,9 @@
 #include<thread>
 #include<mutex>
 #include<memory>
+#include <boost/locale.hpp>
 #include <boost/filesystem.hpp>
-//#include <boost/asio/ssl.hpp>
+#include <boost/asio/ssl.hpp>
 using namespace boost;
 //basic
 //在创建端点（endpoint）之前，客户端应用程序必须获取原始IP地址和指定将与之通信的服务器的协议端口号
@@ -283,6 +284,7 @@ int Resolving_DNS_TCP() {
 	//也可以解析为两者,因此掭的集合可能包含表示IPv4和IPv6的端点
 
 }
+
 int Resolving_DNS_UDP() {
 
 	asio::io_service ios;
@@ -3917,114 +3919,114 @@ int C5_Client_ASYN() {
 
 //数据加密保证即使传输的数据在到达服务器的途中被截获,拦截器也无法使用它
 //使用OpenSSL库实现支持SSL/TLS协议的同步TCP客户端应用程序
-
+#pragma comment(lib, "libcrypto.lib")
+#pragma comment(lib, "libssl.lib")
 //在开始使用时,需要先安装OpenSSL库
 //#include <boost/asio/ssl.hpp>
-//class SyncSSLClient {
-//public:
-//	SyncSSLClient(const std::string& raw_ip_address,
-//		unsigned short port_num) :
-//		m_ep(asio::ip::address::from_string(raw_ip_address),
-//			port_num),
-//		//指定应用程序仅使用客户端角色还使用上下文,并且希望支持多个安全协议,包括多个版本SSL/TLS
-//		m_ssl_context(asio::ssl::context::sslv3_client),
-//		//
-//		m_ssl_stream(m_ios, m_ssl_context)
-//	{
-//		// Set verification mode and designate that
-//		// we want to perform verification.
-//		//首先用户认证模式被设定为asio::ssl::verify_peer
-//		//这意味着在握手期间执行对等验证
-//		m_ssl_stream.set_verify_mode(asio::ssl::verify_peer);
-//		// Set verification callback.
-//		//然后设置一个验证回调方法,当证书从服务器到达时将调用该方法
-//		//对服务器发送的证书链中的每个证书调用一次回调
-//		m_ssl_stream.set_verify_callback([this](
-//			bool preverified,
-//			asio::ssl::verify_context& context)->bool {
-//			return on_peer_verify(preverified, context);
-//		});
-//	}
-//	void connect() {
-//		// Connect the TCP socket.
-//		m_ssl_stream.lowest_layer().connect(m_ep);
-//		// Perform the SSL handshake.
-//		m_ssl_stream.handshake(asio::ssl::stream_base::client);
-//	}
-//	void close() {
-//		// We ignore any errors that might occur
-//		// during shutdown as we anyway can't
-//		// do anything about them.
-//		boost::system::error_code ec;
-//		// shutdown（）方法是同步的并且阻塞，直到SSL连接关闭或发生错误
-//		m_ssl_stream.shutdown(ec); // Shutdown SSL.
-//								   // Shut down the socket.
-//		m_ssl_stream.lowest_layer().shutdown(
-//			boost::asio::ip::tcp::socket::shutdown_both, ec);
-//		m_ssl_stream.lowest_layer().close(ec);
-//	}
-//	std::string emulate_long_computation_op(
-//		unsigned int duration_sec) {
-//		std::string request = "EMULATE_LONG_COMP_OP "
-//			+ std::to_string(duration_sec)
-//			+ "\n";
-//		send_request(request);
-//		return receive_response();
-//	};
-//private:
-//	bool on_peer_verify(bool preverified,
-//		asio::ssl::verify_context& context)
-//	{
-//		// Here the certificate should be verified and the
-//		// verification result should be returned.
-//		return true;
-//	}
-//	void send_request(const std::string& request) {
-//		asio::write(m_ssl_stream, asio::buffer(request));
-//	}
-//	std::string receive_response() {
-//		asio::streambuf buf;
-//		asio::read_until(m_ssl_stream, buf, '\n');
-//		std::string response;
-//		std::istream input(&buf);
-//		std::getline(input, response);
-//		return response;
-//	}
-//private:
-//	asio::io_service m_ios;
-//	asio::ip::tcp::endpoint m_ep;
-//	//一个表示SSL上下文的对象
-//	//基本上，这是OpenSSL库定义的SSL_CTX数据结构的包装器。
-//	//此对象包含使用SSL / TLS协议进行通信的其他对象和函数所使用的全局设置和参数
-//	asio::ssl::context m_ssl_context;
-//	//这表示包装TCP套接字对象并实现所有SSL/TLS通信操作的流
-//	asio::ssl::stream<asio::ip::tcp::socket>m_ssl_stream;
-//};
+class SyncSSLClient {
+public:
+	SyncSSLClient(const std::string& raw_ip_address,
+		unsigned short port_num) :
+		m_ep(asio::ip::address::from_string(raw_ip_address),
+			port_num),
+		//指定应用程序仅使用客户端角色还使用上下文,并且希望支持多个安全协议,包括多个版本SSL/TLS
+		m_ssl_context(asio::ssl::context::sslv3_client),
+		//
+		m_ssl_stream(m_ios, m_ssl_context)
+	{
+		// Set verification mode and designate that
+		// we want to perform verification.
+		//首先用户认证模式被设定为asio::ssl::verify_peer
+		//这意味着在握手期间执行对等验证
+		m_ssl_stream.set_verify_mode(asio::ssl::verify_peer);
+		// Set verification callback.
+		//然后设置一个验证回调方法,当证书从服务器到达时将调用该方法
+		//对服务器发送的证书链中的每个证书调用一次回调
+		m_ssl_stream.set_verify_callback([this](
+			bool preverified,
+			asio::ssl::verify_context& context)->bool {
+			return on_peer_verify(preverified, context);
+		});
+	}
+	void connect() {
+		// Connect the TCP socket.
+		m_ssl_stream.lowest_layer().connect(m_ep);
+		// Perform the SSL handshake.
+		m_ssl_stream.handshake(asio::ssl::stream_base::client);
+	}
+	void close() {
+		// We ignore any errors that might occur
+		// during shutdown as we anyway can't
+		// do anything about them.
+		boost::system::error_code ec;
+		// shutdown（）方法是同步的并且阻塞，直到SSL连接关闭或发生错误
+		m_ssl_stream.shutdown(ec); // Shutdown SSL.
+								   // Shut down the socket.
+		m_ssl_stream.lowest_layer().shutdown(
+			boost::asio::ip::tcp::socket::shutdown_both, ec);
+		m_ssl_stream.lowest_layer().close(ec);
+	}
+	std::string emulate_long_computation_op(
+		unsigned int duration_sec) {
+		std::string request = "GET / HTTP/1.1\r\n";
+		request += "Host: pariya.cc\r\n\r\n";
+		send_request(request);
+		return receive_response();
+	};
+private:
+	bool on_peer_verify(bool preverified,
+		asio::ssl::verify_context& context)
+	{
+		// Here the certificate should be verified and the
+		// verification result should be returned.
+		return true;
+	}
+	void send_request(const std::string& request) {
+		asio::write(m_ssl_stream, asio::buffer(request));
+	}
+	std::string receive_response() {
+		asio::streambuf buf;
+		asio::read_until(m_ssl_stream, buf, "\r\n");
+		std::string response;
+		std::istream input(&buf);
+		std::getline(input, response);
+		return response;
+	}
+private:
+	asio::io_service m_ios;
+	asio::ip::tcp::endpoint m_ep;
+	//一个表示SSL上下文的对象
+	//基本上，这是OpenSSL库定义的SSL_CTX数据结构的包装器。
+	//此对象包含使用SSL / TLS协议进行通信的其他对象和函数所使用的全局设置和参数
+	asio::ssl::context m_ssl_context;
+	//这表示包装TCP套接字对象并实现所有SSL/TLS通信操作的流
+	asio::ssl::stream<asio::ip::tcp::socket>m_ssl_stream;
+};
 
 //由于openSSL环境问题不能正常编译,暂时注释
-//int Test_SSL_TLS_Client() {
-//	const std::string raw_ip_address = "pariya.cc";
-//	const unsigned short port_num = 80;
-//	try {
-//		SyncSSLClient client(raw_ip_address, port_num);
-//		// Sync connect.
-//		client.connect();
-//		std::cout << "Sending request to the server... "
-//			<< std::endl;
-//		std::string response =
-//			client.emulate_long_computation_op(10);
-//		std::cout << "Response received: " << response
-//			<< std::endl;
-//		// Close the connection and free resources.
-//		client.close();
-//	}
-//	catch (system::system_error &e) {
-//		std::cout << "Error occured! Error code = " << e.code()
-//			<< ". Message: " << e.what();
-//		return e.code().value();
-//	}
-//	return 0;
-//}
+int Test_SSL_TLS_Client() {
+	std::string raw_ip_address = "pariya.cc";
+	unsigned short port_num = 80;
+	try {
+		SyncSSLClient client(raw_ip_address, port_num);
+		// Sync connect.
+		client.connect();
+		std::cout << "Sending request to the server... "
+			<< std::endl;
+		std::string response =
+			client.emulate_long_computation_op(10);
+		std::cout << "Response received: " << response
+			<< std::endl;
+		// Close the connection and free resources.
+		client.close();
+	}
+	catch (system::system_error &e) {
+		std::cout << "Error occured! Error code = " << e.code()
+			<< ". Message: " << e.what();
+		return e.code().value();
+	}
+	return 0;
+}
 //p217
 //p226
 
@@ -4265,7 +4267,7 @@ int Test_Stream() {
 	stream.flush();
 	//等待一会
 	std::this_thread::sleep_for(std::chrono::seconds(2));
-	std::cout << "[" << __func__ << "]Response: " << stream.rdbuf()<<std::endl;
+	std::cout << "[" << __func__ << "]Response: " << stream.rdbuf() << std::endl;
 	return 0;
 }
 //我们不仅可以使用asio :: ip :: tcp :: iostream类以面向流的方式实现客户端I / O，我们还可以在服务器端执行I / O操作。
@@ -4289,7 +4291,7 @@ int Test_Stream_receive() {
 	acceptor.accept(*stream.rdbuf());
 	//等待一会
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	std::cout << "["<<__func__<<"]Request: " << stream.rdbuf() << std::endl;
+	std::cout << "[" << __func__ << "]Request: " << stream.rdbuf() << std::endl;
 	stream << "Response.";
 	stream.flush();
 	return 0;
@@ -4300,8 +4302,89 @@ int Test_Stream_receive() {
 //当它用完时，会导致当前阻塞线程的操作中断，如果有的话。
 //超时间隔可以通过asio::ip::tcp::stream类的
 //expires_from_now（）方法设置。
+std::size_t completion_condition(const boost::system::error_code &error,
+/*到目前为止传输的字节数。*/
+std::size_t bytes_transferred
+){
+	if (error == asio::error::eof)
+		return 0;
+	else return 8;
+}
+void SyncHTTPRequest(std::string host, std::string request) {
+	asio::io_service m_ios;
+	//首先创建一个DNS解析
+	asio::ip::tcp::resolver res(m_ios);
+	//待解析语句
+	asio::ip::tcp::resolver::query resolve_query(host, "80", asio::ip::tcp::resolver::query::numeric_service);
+	//同步解析 
+	//使用不抛出异常版本
+	boost::system::error_code e;
+	asio::ip::tcp::resolver::iterator it = res.resolve(resolve_query, e);
+	if (e.value() != 0) {
+		//throw boost::system::system_error(bangumi_bot_errors::sync_http_dns_resolve_error);
+	}
+	//创建一个socket,并且直接打开 
+	asio::ip::tcp::socket sock(m_ios, asio::ip::tcp::v4());
+	//sock
+	asio::ip::tcp::resolver::iterator end;
+	boost::system::error_code ec;
+	//连接可用的ip
+	while (it != end) {
+		//使用不抛出异常版本
+		sock.connect(*it++, ec);
+		//如果有错误
+		if (ec.value() != 0) {
+			if (it != end)
+				continue;
+			else {
+				//throw boost::system::system_error(bangumi_bot_errors::sync_http_dns_connect_error);
+				//break;
+			}
 
+		}
 
+		//此时已经正确连接到了一个IP
+		asio::write(sock, asio::buffer(request));
+		//sock.shutdown(asio::ip::tcp::socket::shutdown_send);
+		//接收buffer
+		asio::streambuf buf;
+
+		//buf.prepare(66666);
+		//首先只接收到头部结束
+		//此处不作处理
+		size_t n = asio::read_until(sock, buf, "\r\n\r\n");
+		//移除已经读取的
+		//buf.consume(n);
+		//buf.commit(n);
+
+		std::string ss = boost::locale::conv::from_utf(
+			boost::asio::buffer_cast<const char*>(buf.data()), "GBK");
+		std::cout << ss << std::endl;
+		buf.consume(n);
+		/*std::cout << "++++Over+++++\n" << boost::locale::conv::from_utf(
+			boost::asio::buffer_cast<const char*>(buf.data()), "GBK") << std::endl;*/
+		//最后接收内容
+		try {
+			boost::system::error_code code;
+			size_t nn = asio::read(sock, buf, completion_condition);
+			//consume
+			if (code == asio::error::eof)
+				std::cout << "Code ";
+		}
+		catch (boost::system::system_error &ec) {
+			if (ec.code() == asio::error::eof)
+				std::cout << "Code = " << ec.code().value() << " Message = " << ec.what();
+		}
+
+		std::cout << "====" << std::endl;
+		std::string s = boost::locale::conv::from_utf(
+			boost::asio::buffer_cast<const char*>(buf.data()), "GBK");
+
+		std::cout << s << std::endl;
+		std::cout << "====" << std::endl;
+		break;
+	}
+}
 int main() {
 
 	//====CH.1====
@@ -4344,7 +4427,7 @@ int main() {
 	//====CH.5====
 	//C5_Client_ASYN();
 	//HTTP_SERVER::Test_Server();
-	//Test_SSL_TLS_Client();
+	Test_SSL_TLS_Client();
 
 	//====CH.6====
 	//Test_Steady_Timer();
@@ -4356,5 +4439,14 @@ int main() {
 	//Test_Stream();
 	//test_stream1.join();
 	//test_stream.join();
+	//std::string x1 = "GET " "/" " HTTP/1.1\r\n"
+	//	"Host: " "pariya.cc""\r\n" "\r\n";
+
+	//SyncHTTPRequest("pariya.cc", x1);
+
+	//std::string x = "GET " "/pic/user/l/000/09/29/92981.jpg" " HTTP/1.1\r\n"
+	//	"Host: " "lain.bgm.tv""\r\n" "\r\n";
+
+	//SyncHTTPRequest("lain.bgm.tv", x);
 	std::system("pause");
 }
